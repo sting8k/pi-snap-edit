@@ -357,5 +357,11 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  pi.setActiveTools(preferQuickEditTools(pi.getActiveTools()));
+  pi.on("session_start", () => {
+    const activeTools = pi.getActiveTools();
+    const preferredTools = preferQuickEditTools(activeTools);
+    if (preferredTools.join("\0") !== activeTools.join("\0")) {
+      pi.setActiveTools(preferredTools);
+    }
+  });
 }
