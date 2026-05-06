@@ -302,7 +302,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "quick_edit",
-    label: "quick_edit",
+    label: "quick-edit",
     description:
       "Edit a file using hash anchors from read output. Replaces the inclusive range from start to end. If end is omitted, replaces one line. Hash mismatch means the file changed; re-read and retry. This tool is atomic: any invalid edit rejects the whole batch.",
     promptSnippet: "Safely edit files using read's <line>:<hash> anchors",
