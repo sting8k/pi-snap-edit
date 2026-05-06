@@ -9,13 +9,21 @@ Minimal Pi extension for hash-anchored edits.
 - Does not override Pi's built-in `edit` tool, but removes `edit` from active tools so agents use `quick_edit`.
 - No config, slash commands, widgets, MCP, or external Tilth dependency.
 
-## Usage
+## Install
 
-Load locally:
+Install from GitHub:
+
+```bash
+pi install git:github.com/sting8k/pi-quickedit
+```
+
+Or load locally from this checkout:
 
 ```bash
 pi -e ./src/index.ts
 ```
+
+## Usage
 
 Read first, then use anchors with `quick_edit`:
 
