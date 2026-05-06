@@ -104,6 +104,69 @@ function formatDiffs(diffs: EditDiff[]): string {
   return chunks.join("\n").trimEnd();
 }
 
+export type QuickEditRenderSummary = {
+  additions: number;
+  removals: number;
+  hasDiff: boolean;
+};
+
+export function summarizeQuickEditOutput(text: string): QuickEditRenderSummary {
+  let inDiff = false;
+  let additions = 0;
+  let removals = 0;
+
+  for (const line of text.split("\n")) {
+    if (line === "── diff ──") {
+      inDiff = true;
+      continue;
+    }
+    if (inDiff && line === "") continue;
+    if (inDiff && line === "---") break;
+    if (!inDiff) continue;
+
+    if (line.startsWith("+ ")) additions++;
+    else if (line.startsWith("- ")) removals++;
+  }
+
+  return { additions, removals, hasDiff: additions > 0 || removals > 0 };
+}
+
+type QuickEditTheme = {
+  fg?: (role: any, text: string) => string;
+  bold?: (text: string) => string;
+};
+
+function color(theme: QuickEditTheme, role: string, text: string): string {
+  return typeof theme.fg === "function" ? theme.fg(role, text) : text;
+}
+
+function renderAnchoredLine(theme: QuickEditTheme, marker: string, line: string, role: string): string | undefined {
+  const match = line.match(/^(\d+):([0-9a-f]{3})\|(.*)$/);
+  if (!match) return undefined;
+  const [, lineNo, hash, content] = match;
+  const gutter = `${marker} ${lineNo}:${hash} │ `;
+  return `${color(theme, "muted", gutter)}${color(theme, role, content ?? "")}`;
+}
+
+function renderQuickEditLine(theme: QuickEditTheme, line: string): string {
+  if (line === "── diff ──") return color(theme, "muted", "diff");
+  if (line === "---") return color(theme, "muted", "---");
+  if (/^:\d+(?:-\d+)?$/.test(line)) return color(theme, "muted", line);
+
+  if (line.startsWith("+ ")) {
+    return renderAnchoredLine(theme, "+", line.slice(2), "success") ?? color(theme, "success", line);
+  }
+  if (line.startsWith("- ")) {
+    return renderAnchoredLine(theme, "-", line.slice(2), "error") ?? color(theme, "error", line);
+  }
+
+  return renderAnchoredLine(theme, " ", line, "toolOutput") ?? color(theme, "toolOutput", line);
+}
+
+function renderQuickEditOutput(theme: QuickEditTheme, text: string): string {
+  return text.split("\n").map((line) => renderQuickEditLine(theme, line)).join("\n");
+}
+
 export function hashReadText(text: string, offsetInput: unknown): string {
   if (text.startsWith("Read image file ") || text.startsWith("[Line ")) return text;
 
@@ -239,7 +302,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "quick_edit",
-    label: "quick-edit",
+    label: "quick_edit",
     description:
       "Edit a file using hash anchors from read output. Replaces the inclusive range from start to end. If end is omitted, replaces one line. Hash mismatch means the file changed; re-read and retry. This tool is atomic: any invalid edit rejects the whole batch.",
     promptSnippet: "Safely edit files using read's <line>:<hash> anchors",
@@ -250,7 +313,6 @@ export default function (pi: ExtensionAPI) {
       "Use diff: true when you need a compact before/after diff.",
     ],
     parameters: QuickEditParams,
-    renderShell: "self",
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const absolutePath = resolvePath(ctx.cwd, params.path);
@@ -272,19 +334,21 @@ export default function (pi: ExtensionAPI) {
       return { content: [{ type: "text" as const, text }], details: undefined };
     },
 
-    renderCall(args, theme) {
-      const count = Array.isArray(args?.edits) ? args.edits.length : 0;
-      return new Text(`${theme.fg("toolTitle", theme.bold("quick-edit "))}${theme.fg("muted", `${args?.path ?? ""} (${count} edit${count === 1 ? "" : "s"})`)}`, 0, 0);
-    },
-
     renderResult(result, { expanded, isPartial }, theme) {
-      if (isPartial) return new Text(theme.fg("warning", "⟳ Applying quick-edit..."), 0, 0);
+      if (isPartial) return new Text(`${color(theme, "dim", "↳")} ${color(theme, "muted", "applying quick-edit...")}`, 0, 0);
+
       const text = result.content?.filter((c) => c.type === "text").map((c) => c.text).join("\n") ?? "";
-      if (!expanded) {
-        const hint = keyHint("app.tools.expand", "to expand");
-        return new Text(theme.fg("success", "✓ quick-edit applied") + theme.fg("muted", ` (${hint})`), 0, 0);
-      }
-      return new Text(theme.fg("success", "✓ quick-edit applied") + (text ? `\n${theme.fg("toolOutput", text)}` : ""), 0, 0);
+      if ((result as any).isError) return new Text(color(theme, "error", text.trim() || "quick-edit failed"), 0, 0);
+
+      const summary = summarizeQuickEditOutput(text);
+      const stats = summary.hasDiff
+        ? ` ${color(theme, "success", `+${summary.additions}`)} ${color(theme, "error", `-${summary.removals}`)}`
+        : "";
+      const hint = !expanded && text ? ` ${color(theme, "muted", `(${keyHint("app.tools.expand", "to expand")})`)}` : "";
+      const header = `${color(theme, "dim", "↳")} ${color(theme, "success", "quick-edit applied")}${stats}${hint}`;
+
+      if (!expanded || !text) return new Text(header, 0, 0);
+      return new Text(`${header}\n${renderQuickEditOutput(theme, text)}`, 0, 0);
     },
   });
 }

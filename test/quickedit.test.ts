@@ -11,6 +11,7 @@ import {
   lineHash,
   parseAnchor,
   splitLines,
+  summarizeQuickEditOutput,
   type Edit,
 } from "../src/index.js";
 
@@ -98,6 +99,17 @@ describe("read result hashing hook", () => {
 
   it("normalizes CRLF emitted by core read text before hashing", () => {
     assert.equal(hashReadText("alpha\r\nbeta", undefined), "1:dab|alpha\n2:4c7|beta");
+  });
+});
+
+describe("quick-edit renderer helpers", () => {
+  it("summarizes compact quick-edit diffs", () => {
+    const text = "── diff ──\n:2\n- 2:4c7|old\n+ 2:aeb|new\n\n1:dab|alpha";
+    assert.deepEqual(summarizeQuickEditOutput(text), { additions: 1, removals: 1, hasDiff: true });
+  });
+
+  it("handles context-only quick-edit output", () => {
+    assert.deepEqual(summarizeQuickEditOutput("1:dab|alpha"), { additions: 0, removals: 0, hasDiff: false });
   });
 });
 
