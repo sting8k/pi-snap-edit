@@ -5,15 +5,7 @@ import { Type } from "@sinclair/typebox";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-const MAX_READ_LINES = 2000;
-const MAX_READ_BYTES = 50 * 1024;
 const CONTEXT_LINES = 5;
-
-const ReadParams = Type.Object({
-  path: Type.String({ description: "Path to the text file to read." }),
-  offset: Type.Optional(Type.Number({ description: "1-indexed line number to start reading from." })),
-  limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read." })),
-});
 
 const QuickEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
@@ -28,7 +20,7 @@ const QuickEditParams = Type.Object({
   diff: Type.Optional(Type.Boolean({ description: "Return a compact before/after diff." })),
 });
 
-type Edit = {
+export type Edit = {
   startLine: number;
   startHash: number;
   endLine: number;
@@ -47,7 +39,7 @@ function resolvePath(cwd: string, inputPath: string): string {
   return path.isAbsolute(inputPath) ? inputPath : path.resolve(cwd, inputPath);
 }
 
-function lineHash(line: string): number {
+export function lineHash(line: string): number {
   let h = 0x811c9dc5;
   for (const b of Buffer.from(line, "utf8")) {
     h ^= b;
@@ -56,15 +48,15 @@ function lineHash(line: string): number {
   return h & 0xfff;
 }
 
-function formatHash(hash: number): string {
+export function formatHash(hash: number): string {
   return hash.toString(16).padStart(3, "0");
 }
 
-function hashLines(lines: string[], startLine: number): string {
+export function hashLines(lines: string[], startLine: number): string {
   return lines.map((line, i) => `${startLine + i}:${formatHash(lineHash(line))}|${line}`).join("\n");
 }
 
-function parseAnchor(anchor: string): { line: number; hash: number } | undefined {
+export function parseAnchor(anchor: string): { line: number; hash: number } | undefined {
   const [lineText, hashText, ...extra] = anchor.split(":");
   if (!lineText || !hashText || extra.length > 0) return undefined;
   const line = Number.parseInt(lineText.trim(), 10);
@@ -73,7 +65,7 @@ function parseAnchor(anchor: string): { line: number; hash: number } | undefined
   return { line, hash };
 }
 
-function splitLines(content: string): string[] {
+export function splitLines(content: string): string[] {
   const withoutTrailingNewline = content.endsWith("\n") ? content.slice(0, content.endsWith("\r\n") ? -2 : -1) : content;
   if (withoutTrailingNewline.length === 0) return [];
   return withoutTrailingNewline.split(/\r?\n/);
@@ -98,12 +90,12 @@ function formatDiffs(diffs: EditDiff[]): string {
 
     for (let i = 0; i < diff.oldLines.length; i++) {
       const lineNo = diff.oldStart + i;
-      const line = diff.oldLines[i];
+      const line = diff.oldLines[i]!;
       chunks.push(`- ${lineNo}:${formatHash(lineHash(line))}|${line}`);
     }
     for (let i = 0; i < diff.newLines.length; i++) {
       const lineNo = diff.newStart + i;
-      const line = diff.newLines[i];
+      const line = diff.newLines[i]!;
       chunks.push(`+ ${lineNo}:${formatHash(lineHash(line))}|${line}`);
     }
     chunks.push("");
@@ -112,36 +104,19 @@ function formatDiffs(diffs: EditDiff[]): string {
   return chunks.join("\n").trimEnd();
 }
 
-async function readHashlinedFile(absolutePath: string, offset?: number, limit?: number): Promise<string> {
-  const buffer = await fs.readFile(absolutePath);
-  if (buffer.subarray(0, 8192).includes(0)) {
-    return `# ${absolutePath}\n\n[Binary file omitted: quickedit read only hash-lines text files.]`;
-  }
+export function hashReadText(text: string, offsetInput: unknown): string {
+  if (text.startsWith("Read image file ") || text.startsWith("[Line ")) return text;
 
-  const content = buffer.toString("utf8");
-  const lines = splitLines(content);
-  const startIndex = offset === undefined ? 0 : Math.max(0, Math.floor(offset) - 1);
-  if (startIndex >= lines.length && lines.length > 0) {
-    throw new Error(`Offset ${offset} is beyond end of file (${lines.length} lines total)`);
-  }
+  const noticeMatch = text.match(/\n\n(\[(?:Showing lines \d+-\d+ of \d+(?: \([^\]]+\))?\. Use offset=\d+ to continue\.|\d+ more lines in file\. Use offset=\d+ to continue\.)\])$/);
+  const body = noticeMatch ? text.slice(0, noticeMatch.index) : text;
+  const notice = noticeMatch ? `\n\n${noticeMatch[1]}` : "";
+  const startLine = typeof offsetInput === "number" && Number.isFinite(offsetInput) ? Math.max(1, Math.floor(offsetInput)) : 1;
+  const lines = body.split("\n").map((line) => line.replace(/\r$/, ""));
 
-  const requestedLimit = limit === undefined ? MAX_READ_LINES : Math.max(0, Math.floor(limit));
-  let selected = lines.slice(startIndex, startIndex + requestedLimit);
-  let output = hashLines(selected, startIndex + 1);
-
-  while (Buffer.byteLength(output, "utf8") > MAX_READ_BYTES && selected.length > 1) {
-    selected = selected.slice(0, Math.max(1, Math.floor(selected.length / 2)));
-    output = hashLines(selected, startIndex + 1);
-  }
-
-  const endLine = startIndex + selected.length;
-  if (endLine < lines.length) {
-    output += `\n\n[Showing lines ${startIndex + 1}-${endLine} of ${lines.length}. Use offset=${endLine + 1} to continue.]`;
-  }
-  return output;
+  return hashLines(lines, startLine) + notice;
 }
 
-async function applyQuickEdits(absolutePath: string, edits: Edit[], showDiff: boolean): Promise<string> {
+export async function applyQuickEdits(absolutePath: string, edits: Edit[], showDiff: boolean): Promise<string> {
   if (edits.length === 0) throw new Error("edits must contain at least one replacement");
 
   const content = await fs.readFile(absolutePath, "utf8");
@@ -164,7 +139,7 @@ async function applyQuickEdits(absolutePath: string, edits: Edit[], showDiff: bo
     }
 
     const startIndex = edit.startLine - 1;
-    const actualStartHash = lineHash(lines[startIndex]);
+    const actualStartHash = lineHash(lines[startIndex]!);
     if (actualStartHash !== edit.startHash) {
       const contextStart = Math.max(0, startIndex - 2);
       const contextEnd = Math.min(total, startIndex + 3);
@@ -177,7 +152,7 @@ async function applyQuickEdits(absolutePath: string, edits: Edit[], showDiff: bo
 
     if (edit.endLine !== edit.startLine) {
       const endIndex = edit.endLine - 1;
-      const actualEndHash = lineHash(lines[endIndex]);
+      const actualEndHash = lineHash(lines[endIndex]!);
       if (actualEndHash !== edit.endHash) {
         const contextStart = Math.max(0, endIndex - 2);
         const contextEnd = Math.min(total, endIndex + 3);
@@ -195,8 +170,8 @@ async function applyQuickEdits(absolutePath: string, edits: Edit[], showDiff: bo
 
   const ranges = edits.map((edit) => [edit.startLine, edit.endLine] as const).sort((a, b) => a[0] - b[0]);
   for (let i = 1; i < ranges.length; i++) {
-    const prev = ranges[i - 1];
-    const curr = ranges[i];
+    const prev = ranges[i - 1]!;
+    const curr = ranges[i]!;
     if (prev[1] >= curr[0]) {
       throw new Error(`overlapping edit ranges in batch: lines ${prev[0]}-${prev[1]} and ${curr[0]}-${curr[1]}`);
     }
@@ -204,10 +179,10 @@ async function applyQuickEdits(absolutePath: string, edits: Edit[], showDiff: bo
 
   const oldSnapshots = edits.map((edit) => lines.slice(edit.startLine - 1, edit.endLine));
   const updated = [...lines];
-  const indices = edits.map((_, i) => i).sort((a, b) => edits[b].startLine - edits[a].startLine);
+  const indices = edits.map((_, i) => i).sort((a, b) => edits[b]!.startLine - edits[a]!.startLine);
 
   for (const idx of indices) {
-    const edit = edits[idx];
+    const edit = edits[idx]!;
     const replacement = edit.content === "" ? [] : edit.content.split(/\r?\n/);
     updated.splice(edit.startLine - 1, edit.endLine - edit.startLine + 1, ...replacement);
   }
@@ -218,19 +193,19 @@ async function applyQuickEdits(absolutePath: string, edits: Edit[], showDiff: bo
   if (hasTrailingNewline) newContent += lineEnding;
   await fs.writeFile(absolutePath, newContent, "utf8");
 
-  const ordered = edits.map((_, i) => i).sort((a, b) => edits[a].startLine - edits[b].startLine);
+  const ordered = edits.map((_, i) => i).sort((a, b) => edits[a]!.startLine - edits[b]!.startLine);
   let offset = 0;
   const contexts: string[] = [];
   const diffs: EditDiff[] = [];
 
   for (const idx of ordered) {
-    const edit = edits[idx];
+    const edit = edits[idx]!;
     const adjusted = Math.max(0, edit.startLine - 1 + offset);
     const oldCount = edit.endLine - edit.startLine + 1;
     const newLines = edit.content === "" ? [] : edit.content.split(/\r?\n/);
     const newStart = Math.max(1, adjusted + 1);
 
-    diffs.push({ oldStart: edit.startLine, newStart, oldLines: oldSnapshots[idx], newLines });
+    diffs.push({ oldStart: edit.startLine, newStart, oldLines: oldSnapshots[idx]!, newLines });
 
     const contextStart = Math.max(0, adjusted - CONTEXT_LINES);
     const contextEnd = Math.min(updated.length, adjusted + newLines.length + CONTEXT_LINES);
@@ -251,23 +226,15 @@ async function applyQuickEdits(absolutePath: string, edits: Edit[], showDiff: bo
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.registerTool({
-    name: "read",
-    label: "read",
-    description:
-      "Read a text file and return hash-anchored lines for safe quick_edit edits. Output format is <line>:<hash>|<content>. Use these anchors with quick_edit. For large files, use offset/limit to read the needed section.",
-    promptSnippet: "Read file contents with hash anchors for quick_edit",
-    promptGuidelines: [
-      "Use read before quick_edit so you have current <line>:<hash> anchors.",
-      "Do not invent quick_edit anchors; copy them from read output.",
-    ],
-    parameters: ReadParams,
+  pi.on("tool_result", (event) => {
+    if (event.toolName !== "read" || event.isError) return;
+    if (event.content.some((part) => part.type === "image")) return;
 
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const absolutePath = resolvePath(ctx.cwd, params.path);
-      const text = await readHashlinedFile(absolutePath, params.offset, params.limit);
-      return { content: [{ type: "text" as const, text }] };
-    },
+    return {
+      content: event.content.map((part) =>
+        part.type === "text" ? { ...part, text: hashReadText(part.text, event.input.offset) } : part,
+      ),
+    };
   });
 
   pi.registerTool({
@@ -302,7 +269,7 @@ export default function (pi: ExtensionAPI) {
       });
 
       const text = await withFileMutationQueue(absolutePath, () => applyQuickEdits(absolutePath, edits, params.diff === true));
-      return { content: [{ type: "text" as const, text }] };
+      return { content: [{ type: "text" as const, text }], details: undefined };
     },
 
     renderCall(args, theme) {
@@ -314,7 +281,7 @@ export default function (pi: ExtensionAPI) {
       if (isPartial) return new Text(theme.fg("warning", "⟳ Applying quick-edit..."), 0, 0);
       const text = result.content?.filter((c) => c.type === "text").map((c) => c.text).join("\n") ?? "";
       if (!expanded) {
-        const hint = keyHint("expandTools", "to expand");
+        const hint = keyHint("app.tools.expand", "to expand");
         return new Text(theme.fg("success", "✓ quick-edit applied") + theme.fg("muted", ` (${hint})`), 0, 0);
       }
       return new Text(theme.fg("success", "✓ quick-edit applied") + (text ? `\n${theme.fg("toolOutput", text)}` : ""), 0, 0);

@@ -4,7 +4,7 @@ Minimal Pi extension for hash-anchored edits.
 
 ## Behavior
 
-- Overrides Pi's `read` tool to return text lines as `<line>:<hash>|<content>`.
+- Hooks Pi's core `read` result and adds `<line>:<hash>|<content>` anchors to text output.
 - Adds a new `quick_edit` tool, displayed as `quick-edit`.
 - Does not override Pi's built-in `edit` tool.
 - No config, slash commands, widgets, MCP, or external Tilth dependency.
