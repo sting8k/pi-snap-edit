@@ -131,6 +131,11 @@ export function summarizeQuickEditOutput(text: string): QuickEditRenderSummary {
   return { additions, removals, hasDiff: additions > 0 || removals > 0 };
 }
 
+export function preferQuickEditTools(activeTools: string[]): string[] {
+  const withoutEdit = activeTools.filter((toolName) => toolName !== "edit");
+  return withoutEdit.includes("quick_edit") ? withoutEdit : [...withoutEdit, "quick_edit"];
+}
+
 type QuickEditTheme = {
   fg?: (role: any, text: string) => string;
   bold?: (text: string) => string;
@@ -351,4 +356,6 @@ export default function (pi: ExtensionAPI) {
       return new Text(`${header}\n${renderQuickEditOutput(theme, text)}`, 0, 0);
     },
   });
+
+  pi.setActiveTools(preferQuickEditTools(pi.getActiveTools()));
 }

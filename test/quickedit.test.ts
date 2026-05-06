@@ -12,6 +12,7 @@ import {
   parseAnchor,
   splitLines,
   summarizeQuickEditOutput,
+  preferQuickEditTools,
   type Edit,
 } from "../src/index.js";
 
@@ -110,6 +111,10 @@ describe("quick-edit renderer helpers", () => {
 
   it("handles context-only quick-edit output", () => {
     assert.deepEqual(summarizeQuickEditOutput("1:dab|alpha"), { additions: 0, removals: 0, hasDiff: false });
+  });
+  it("prefers quick_edit by removing built-in edit from active tools", () => {
+    assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit"]);
+    assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "edit"]), ["read", "quick_edit"]);
   });
 });
 
