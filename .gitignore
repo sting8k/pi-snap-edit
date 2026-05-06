@@ -37,3 +37,6 @@ pnpm-debug.log*
 # Testing
 coverage/
 .nyc_output/
+
+# Local test scratch
+tmp/
