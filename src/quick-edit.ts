@@ -4,6 +4,15 @@ import { CONTEXT_LINES, formatContexts, formatDiffs, type ContextRange, type Edi
 import type { Edit } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
+function staleAnchorMessage(lineNo: number, expectedHash: number, actualHash: number, context: string): string {
+  return (
+    `Stale anchor at line ${lineNo}: supplied ${lineNo}:${formatHash(expectedHash)}, current hash is ${formatHash(actualHash)}.\n` +
+    "Current content around this line:\n" +
+    context +
+    "\nReview the current content before retrying with a new anchor."
+  );
+}
+
 export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Promise<string> {
   if (edits.length === 0) throw new Error("edits must contain at least one replacement");
 
@@ -32,8 +41,12 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
       const contextStart = Math.max(0, startIndex - 2);
       const contextEnd = Math.min(total, startIndex + 3);
       mismatches.push(
-        `Hash mismatch at line ${edit.startLine} (expected ${formatHash(edit.startHash)}, got ${formatHash(actualStartHash)}):\n` +
+        staleAnchorMessage(
+          edit.startLine,
+          edit.startHash,
+          actualStartHash,
           hashLines(lines.slice(contextStart, contextEnd), contextStart + 1),
+        ),
       );
       continue;
     }
@@ -45,15 +58,19 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
         const contextStart = Math.max(0, endIndex - 2);
         const contextEnd = Math.min(total, endIndex + 3);
         mismatches.push(
-          `Hash mismatch at line ${edit.endLine} (expected ${formatHash(edit.endHash)}, got ${formatHash(actualEndHash)}):\n` +
+          staleAnchorMessage(
+            edit.endLine,
+            edit.endHash,
+            actualEndHash,
             hashLines(lines.slice(contextStart, contextEnd), contextStart + 1),
+          ),
         );
       }
     }
   }
 
   if (mismatches.length > 0) {
-    throw new Error(`hash mismatch — file changed since last read:\n\n${mismatches.join("\n\n")}`);
+    throw new Error(`stale anchor — file changed since last read; no edits were applied.\n\n${mismatches.join("\n\n")}`);
   }
 
   const ranges = edits.map((edit) => [edit.startLine, edit.endLine] as const).sort((a, b) => a[0] - b[0]);

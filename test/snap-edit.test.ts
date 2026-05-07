@@ -188,7 +188,7 @@ describe("quick edits", () => {
     const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
     const stale = editFor(["one", "OLD", "three"], 2, 2, ["TWO"]);
 
-    await assert.rejects(() => applyQuickEdits(file, [stale]), /hash mismatch/);
+    await assert.rejects(() => applyQuickEdits(file, [stale]), /stale anchor — file changed since last read; no edits were applied[\s\S]*Stale anchor at line 2: supplied 2:[0-9a-f]{3}, current hash is [0-9a-f]{3}[\s\S]*Current content around this line:[\s\S]*2:.*\|two[\s\S]*Review the current content before retrying with a new anchor/);
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
 
@@ -196,7 +196,7 @@ describe("quick edits", () => {
     const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
     const edit = editFor(["one", "two", "OLD"], 2, 3, ["TWO"]);
 
-    await assert.rejects(() => applyQuickEdits(file, [edit]), /hash mismatch/);
+    await assert.rejects(() => applyQuickEdits(file, [edit]), /stale anchor — file changed since last read; no edits were applied[\s\S]*Stale anchor at line 3: supplied 3:[0-9a-f]{3}, current hash is [0-9a-f]{3}/);
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
 

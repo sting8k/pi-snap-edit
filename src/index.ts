@@ -123,9 +123,11 @@ export default function (pi: ExtensionAPI) {
       "Edit a file using read anchors. Anchor fields must be only the <line>:<hash> prefix before '|'; never include '|content'. Replaces the inclusive range from start to end with lines[]. Atomic: any invalid edit rejects the whole batch.",
     promptSnippet: "Safely edit files using read's <line>:<hash> anchor prefix",
     promptGuidelines: [
-      "Use quick_edit after read when exact current anchors are available.",
+      "Use quick_edit for one simple anchored range replacement, or batch multiple independent ranges from the same latest read in one call.",
       "Copy only the <line>:<hash> prefix before '|', e.g. '11:f80'. Never include '|content'.",
       "Use start/end anchors only; put replacement text only in lines[]. Use lines: [] to delete.",
+      "After any successful edit/write, use anchors from the latest tool output for nearby follow-up edits; otherwise read again before another quick_edit.",
+      "For several small edits in one file, prefer one structured_edit call over multiple quick_edit calls.",
     ],
     parameters: QuickEditParams,
 
@@ -175,12 +177,12 @@ export default function (pi: ExtensionAPI) {
       "Edit a file with structured operations. Anchor fields must be only the <line>:<hash> prefix before '|'; never include '|content'. Uses counted substitutions and anchored line operations atomically.",
     promptSnippet: "Apply substitutions and line ops using only <line>:<hash> anchors",
     promptGuidelines: [
-      "Use structured_edit when several small substitutions/inserts/deletes avoid rewriting a long block.",
+      "Use structured_edit for several edits in one file from the same latest read snapshot.",
       "For every scope/start/end/anchor field, copy only the <line>:<hash> prefix before '|', e.g. '11:f80'.",
       "Correct shape example: {\"path\":\"file\",\"scope\":{\"start\":\"70:8b1\",\"end\":\"73:8a8\"},\"ops\":[{\"type\":\"replace_lines\",\"start\":\"70:8b1\",\"end\":\"73:8a8\",\"lines\":[\"...\"]}]}",
-      "Use substitute only for single-line old/new strings. For multi-line changes, use replace_lines with start/end and lines[].",
+      "Use replace_lines for anchored range replacement; use substitute only for single-line old/new strings.",
       "Use insert_after on the last anchored line to append content at EOF.",
-      "Use quick_edit instead for one simple anchored range replacement.",
+      "Do not make multiple quick_edit calls in the same file when one structured_edit call can express the changes.",
     ],
     parameters: StructuredEditParams,
     prepareArguments: prepareStructuredEditArguments,
