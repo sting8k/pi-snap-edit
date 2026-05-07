@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { keyHint, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import path from "node:path";
-import { parseAnchor } from "./anchors.js";
+import { invalidAnchorMessage, parseAnchor } from "./anchors.js";
 import { preferQuickEditTools } from "./active-tools.js";
 import { applyQuickEdits } from "./quick-edit.js";
 import { hashReadText } from "./read-hook.js";
@@ -10,7 +10,7 @@ import { color, renderQuickEditOutput, summarizeQuickEditOutput } from "./render
 import { QuickEditParams, StructuredEditParams } from "./schemas.js";
 import { applyStructuredEdits } from "./structured-edit.js";
 
-export { formatHash, hashLines, lineHash, parseAnchor } from "./anchors.js";
+export { formatHash, hashLines, invalidAnchorMessage, lineHash, parseAnchor } from "./anchors.js";
 export { preferQuickEditTools } from "./active-tools.js";
 export { applyQuickEdits } from "./quick-edit.js";
 export { hashReadText } from "./read-hook.js";
@@ -19,8 +19,28 @@ export type { Edit, StructuredEditOp } from "./schemas.js";
 export { splitLines } from "./text.js";
 export { applyStructuredEdits } from "./structured-edit.js";
 
+const GUIDANCE_ERROR = "__piSnapEditGuidanceError";
+const SCOPE_SYNTAX_ERROR =
+  'Invalid scope. Correct syntax: "scope": {"start":"70:8b1","end":"73:8a8"}. Keep start/end inside scope.';
+
 function resolvePath(cwd: string, inputPath: string): string {
   return path.isAbsolute(inputPath) ? inputPath : path.resolve(cwd, inputPath);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function prepareStructuredEditArguments(input: unknown): any {
+  if (!isRecord(input)) return input;
+  if (input.scope === undefined) return input;
+  if (isRecord(input.scope) && typeof input.scope.start === "string" && typeof input.scope.end === "string") return input;
+
+  return {
+    ...input,
+    scope: { start: "1:000", end: "1:000" },
+    [GUIDANCE_ERROR]: SCOPE_SYNTAX_ERROR,
+  };
 }
 
 export default function (pi: ExtensionAPI) {
@@ -52,9 +72,10 @@ export default function (pi: ExtensionAPI) {
       const absolutePath = resolvePath(ctx.cwd, params.path);
       const edits = params.edits.map((edit, i) => {
         const start = parseAnchor(edit.start);
-        if (!start) throw new Error(`edit[${i}]: invalid start anchor '${edit.start}'`);
-        const end = edit.end === undefined ? start : parseAnchor(edit.end);
-        if (!end) throw new Error(`edit[${i}]: invalid end anchor '${edit.end}'`);
+        if (!start) throw new Error(`edit[${i}]: ${invalidAnchorMessage(edit.start)}`);
+        const endText = edit.end;
+        const end = endText === undefined ? start : parseAnchor(endText);
+        if (!end) throw new Error(`edit[${i}]: ${invalidAnchorMessage(endText ?? "")}`);
         return {
           startLine: start.line,
           startHash: start.hash,
@@ -95,13 +116,17 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: [
       "Use structured_edit when several small substitutions/inserts/deletes avoid rewriting a long block.",
       "For every scope/start/end/anchor field, copy only the <line>:<hash> prefix before '|', e.g. '11:f80'.",
-      "Use substitute for single-line substring replacements with count as an assertion. Use line operations for multi-line changes.",
+      "Correct shape example: {\"path\":\"file\",\"scope\":{\"start\":\"70:8b1\",\"end\":\"73:8a8\"},\"ops\":[{\"type\":\"replace_lines\",\"start\":\"70:8b1\",\"end\":\"73:8a8\",\"lines\":[\"...\"]}]}",
+      "Use substitute only for single-line old/new strings. For multi-line changes, use replace_lines with start/end and lines[].",
       "Use insert_after on the last anchored line to append content at EOF.",
       "Use quick_edit instead for one simple anchored range replacement.",
     ],
     parameters: StructuredEditParams,
+    prepareArguments: prepareStructuredEditArguments,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const guidanceError = (params as any)[GUIDANCE_ERROR];
+      if (typeof guidanceError === "string") throw new Error(guidanceError);
       const absolutePath = resolvePath(ctx.cwd, params.path);
       const text = await withFileMutationQueue(absolutePath, () => applyStructuredEdits(absolutePath, params.ops, params.scope));
       return { content: [{ type: "text" as const, text }], details: undefined };

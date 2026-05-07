@@ -17,9 +17,19 @@ export function hashLines(lines: string[], startLine: number): string {
 
 export function parseAnchor(anchor: string): { line: number; hash: number } | undefined {
   const [lineText, hashText, ...extra] = anchor.split(":");
-  if (!lineText || !hashText || extra.length > 0) return undefined;
-  const line = Number.parseInt(lineText.trim(), 10);
-  const hash = Number.parseInt(hashText.trim(), 16);
-  if (!Number.isInteger(line) || line < 1 || !Number.isInteger(hash) || hash < 0) return undefined;
+  const linePart = lineText?.trim();
+  const hashPart = hashText?.trim();
+  if (!linePart || !hashPart || extra.length > 0 || !/^\d+$/.test(linePart) || !/^[0-9a-f]+$/i.test(hashPart)) return undefined;
+  const line = Number.parseInt(linePart, 10);
+  const hash = Number.parseInt(hashPart, 16);
+  if (line < 1 || hash < 0) return undefined;
   return { line, hash };
+}
+
+export function invalidAnchorMessage(anchor: string): string {
+  const prefix = anchor.split("|", 1)[0] ?? "";
+  if (anchor.includes("|") && parseAnchor(prefix)) {
+    return `invalid anchor '${anchor}'. Use only '${prefix}' before '|'.`;
+  }
+  return `invalid anchor '${anchor}'. Expected '<line>:<hash>', e.g. '11:f80'.`;
 }

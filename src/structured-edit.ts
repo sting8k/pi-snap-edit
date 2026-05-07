@@ -1,12 +1,12 @@
 import { promises as fs } from "node:fs";
-import { formatHash, hashLines, lineHash, parseAnchor } from "./anchors.js";
+import { formatHash, hashLines, invalidAnchorMessage, lineHash, parseAnchor } from "./anchors.js";
 import { CONTEXT_LINES, formatContexts, formatDiffs, type ContextRange, type EditDiff } from "./diff.js";
 import type { AnchorRangeInput, StructuredEditOp } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
 function validateAnchorLine(lines: string[], anchorText: string, label: string): number {
   const anchor = parseAnchor(anchorText);
-  if (!anchor) throw new Error(`${label}: invalid anchor '${anchorText}'`);
+  if (!anchor) throw new Error(`${label}: ${invalidAnchorMessage(anchorText)}`);
   const { line: lineNo, hash: expectedHash } = anchor;
   const total = lines.length;
   if (lineNo < 1 || lineNo > total) {
@@ -98,7 +98,10 @@ export async function applyStructuredEdits(
   const applySubstitute = (op: Extract<StructuredEditOp, { type: "substitute" }>) => {
     if (op.old.length === 0) throw new Error("substitute old must not be empty");
     if (op.old.includes("\n") || op.old.includes("\r") || op.new.includes("\n") || op.new.includes("\r")) {
-      throw new Error("substitute old/new must be single-line strings; use line operations for multi-line changes");
+      throw new Error(
+        "substitute old/new must be single-line. For multi-line changes use: " +
+          '{"type":"replace_lines","start":"70:8b1","end":"73:8a8","lines":["..."]}',
+      );
     }
     if (op.old === op.new) throw new Error("substitute old and new must differ");
 

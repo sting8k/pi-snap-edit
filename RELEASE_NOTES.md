@@ -1,12 +1,14 @@
-## pi-snap-edit v0.1.2
+## pi-snap-edit v0.1.3
 
-Clarifies anchor usage in tool prompts and docs so agents copy only the `<line>:<hash>` prefix, not the full read line with `|content`.
+Improves agent-facing guidance for structured edits and invalid anchors.
 
 ### Changes
 
-- Tightened `quick_edit` and `structured_edit` prompt wording around anchor-only fields.
-- Updated schema descriptions for `start`, `end`, `scope`, and `anchor` fields to warn against including `|content`.
-- Added README usage guidance showing that only the anchor prefix should be copied.
+- Added a compact correct-shape example to `structured_edit` prompt guidance.
+- Added concise malformed `scope` guidance with the correct JSON syntax.
+- Improved invalid anchor errors to tell agents to copy only the `<line>:<hash>` prefix before `|`.
+- Tightened anchor parsing so anchors with trailing `|content` are rejected instead of partially parsed.
+- Added a clearer `replace_lines` hint when `substitute` is used with multi-line strings.
 
 ### Install
 

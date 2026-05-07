@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import {
+import snapEditExtension, {
   applyQuickEdits,
   applyStructuredEdits,
   formatHash,
   hashLines,
+  invalidAnchorMessage,
   hashReadText,
   lineHash,
   parseAnchor,
@@ -64,6 +65,12 @@ describe("hash helpers", () => {
     assert.equal(parseAnchor("42:abc:extra"), undefined);
     assert.equal(parseAnchor("x:abc"), undefined);
     assert.equal(parseAnchor("42:xyz"), undefined);
+    assert.equal(parseAnchor("42:abc|const value = 1;"), undefined);
+    assert.equal(
+      invalidAnchorMessage("42:abc|const value = 1;"),
+      "invalid anchor '42:abc|const value = 1;'. Use only '42:abc' before '|'.",
+    );
+    assert.equal(invalidAnchorMessage("42"), "invalid anchor '42'. Expected '<line>:<hash>', e.g. '11:f80'.");
   });
 
   it("splits text while preserving editable lines semantics", () => {
@@ -318,6 +325,10 @@ describe("structured edits", () => {
       () => applyStructuredEdits(file, [{ type: "replace_lines", start: anchorFor(staleLines, 2), lines: ["TWO"] }]),
       /op\[0\] replace_lines: hash mismatch at replace_lines start line 2/,
     );
+    await assert.rejects(
+      () => applyStructuredEdits(file, [{ type: "insert_after", anchor: `${anchorFor(original, 2)}|two`, lines: ["x"] }]),
+      /Use only '2:.+' before '\|'\./,
+    );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
 
@@ -356,8 +367,36 @@ describe("structured edits", () => {
 
     await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "", new: "x" }]), /old must not be empty/);
     await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "alpha", new: "alpha" }]), /must differ/);
-    await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "alpha", new: "a\nb" }]), /single-line strings/);
+    await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "alpha", new: "a\nb" }]), /replace_lines/);
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("returns concise syntax guidance for malformed structured_edit scope", async () => {
+    const registered: any[] = [];
+    snapEditExtension({
+      on() {},
+      registerTool(tool: any) {
+        registered.push(tool);
+      },
+      setActiveTools() {},
+      getActiveTools() {
+        return [];
+      },
+    } as any);
+    const tool = registered.find((entry) => entry.name === "structured_edit");
+    assert.ok(tool);
+
+    const prepared = tool.prepareArguments({
+      path: "style.css",
+      scope: '\n<parameter name="start">70:8b1',
+      end: "73:8a8",
+      ops: [{ type: "substitute", old: "a", new: "b", count: 1 }],
+    });
+
+    await assert.rejects(
+      () => tool.execute("call-1", prepared, undefined, undefined, { cwd: process.cwd() }),
+      /Invalid scope\. Correct syntax: "scope": \{"start":"70:8b1","end":"73:8a8"\}\. Keep start\/end inside scope\./,
+    );
   });
 
   it("replaces multiple occurrences on one line when count matches", async () => {
