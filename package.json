@@ -1,6 +1,6 @@
 {
   "name": "pi-snap-edit",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Fast, precise, script-free edits for Pi agents",
   "keywords": [
     "pi-package",

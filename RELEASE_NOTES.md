@@ -1,14 +1,13 @@
-## pi-snap-edit v0.1.3
+## pi-snap-edit v0.1.4
 
-Improves agent-facing guidance for structured edits and invalid anchors.
+Adds concise structural preflight guidance for `structured_edit` arguments so invalid op shapes produce actionable errors instead of noisy union validation output.
 
 ### Changes
 
-- Added a compact correct-shape example to `structured_edit` prompt guidance.
-- Added concise malformed `scope` guidance with the correct JSON syntax.
-- Improved invalid anchor errors to tell agents to copy only the `<line>:<hash>` prefix before `|`.
-- Tightened anchor parsing so anchors with trailing `|content` are rejected instead of partially parsed.
-- Added a clearer `replace_lines` hint when `substitute` is used with multi-line strings.
+- Added strict preflight checks for `structured_edit` argument structure before TypeBox union validation.
+- Added concise errors for malformed `scope`, missing/empty `ops`, non-object ops, invalid op types, and missing required op fields.
+- Included correct syntax examples in guidance errors for common structured operations.
+- Kept behavior strict: invalid inputs are rejected, not auto-normalized.
 
 ### Install
 

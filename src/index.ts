@@ -20,8 +20,18 @@ export { splitLines } from "./text.js";
 export { applyStructuredEdits } from "./structured-edit.js";
 
 const GUIDANCE_ERROR = "__piSnapEditGuidanceError";
-const SCOPE_SYNTAX_ERROR =
-  'Invalid scope. Correct syntax: "scope": {"start":"70:8b1","end":"73:8a8"}. Keep start/end inside scope.';
+const STRUCTURED_OP_TYPES = ["substitute", "replace_lines", "delete_lines", "insert_before", "insert_after"] as const;
+
+const STRUCTURED_OP_EXAMPLES: Record<string, string> = {
+  substitute: '{"type":"substitute","old":"...","new":"...","count":1}',
+  replace_lines: '{"type":"replace_lines","start":"70:8b1","end":"73:8a8","lines":["..."]}',
+  delete_lines: '{"type":"delete_lines","start":"70:8b1","end":"73:8a8"}',
+  insert_before: '{"type":"insert_before","anchor":"70:8b1","lines":["..."]}',
+  insert_after: '{"type":"insert_after","anchor":"70:8b1","lines":["..."]}',
+};
+
+const SCOPE_EXAMPLE = '"scope":{"start":"70:8b1","end":"73:8a8"}';
+const OPS_EXAMPLE = `"ops":[${STRUCTURED_OP_EXAMPLES.replace_lines}]`;
 
 function resolvePath(cwd: string, inputPath: string): string {
   return path.isAbsolute(inputPath) ? inputPath : path.resolve(cwd, inputPath);
@@ -31,16 +41,67 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function hasStringField(value: Record<string, unknown>, field: string): boolean {
+  return typeof value[field] === "string";
+}
+
+function hasStringArrayField(value: Record<string, unknown>, field: string, allowEmpty: boolean): boolean {
+  const lines = value[field];
+  return Array.isArray(lines) && (allowEmpty || lines.length > 0) && lines.every((line) => typeof line === "string");
+}
+
+function structuredGuidanceError(message: string): Record<string, unknown> {
+  return {
+    path: "__pi_snap_edit_invalid__",
+    ops: [{ type: "substitute", old: "__pi_snap_edit_invalid__", new: "__pi_snap_edit_invalid__" }],
+    [GUIDANCE_ERROR]: message,
+  };
+}
+
+function validateStructuredOpShape(op: Record<string, unknown>, index: number): string | undefined {
+  const type = op.type;
+  if (typeof type !== "string" || !STRUCTURED_OP_TYPES.includes(type as any)) {
+    return `Invalid structured_edit ops[${index}]. Allowed types: ${STRUCTURED_OP_TYPES.join(", ")}. For range replacement use: ${STRUCTURED_OP_EXAMPLES.replace_lines}`;
+  }
+
+  switch (type) {
+    case "substitute":
+      if (!hasStringField(op, "old") || !hasStringField(op, "new")) return `Invalid structured_edit ops[${index}] substitute. Correct syntax: ${STRUCTURED_OP_EXAMPLES.substitute}`;
+      return undefined;
+    case "replace_lines":
+      if (!hasStringField(op, "start") || !hasStringArrayField(op, "lines", true)) return `Invalid structured_edit ops[${index}] replace_lines. Correct syntax: ${STRUCTURED_OP_EXAMPLES.replace_lines}`;
+      return undefined;
+    case "delete_lines":
+      if (!hasStringField(op, "start")) return `Invalid structured_edit ops[${index}] delete_lines. Correct syntax: ${STRUCTURED_OP_EXAMPLES.delete_lines}`;
+      return undefined;
+    case "insert_before":
+    case "insert_after":
+      if (!hasStringField(op, "anchor") || !hasStringArrayField(op, "lines", false)) return `Invalid structured_edit ops[${index}] ${type}. Correct syntax: ${STRUCTURED_OP_EXAMPLES[type]}`;
+      return undefined;
+  }
+}
+
 function prepareStructuredEditArguments(input: unknown): any {
   if (!isRecord(input)) return input;
-  if (input.scope === undefined) return input;
-  if (isRecord(input.scope) && typeof input.scope.start === "string" && typeof input.scope.end === "string") return input;
 
-  return {
-    ...input,
-    scope: { start: "1:000", end: "1:000" },
-    [GUIDANCE_ERROR]: SCOPE_SYNTAX_ERROR,
-  };
+  if (input.scope !== undefined && !(isRecord(input.scope) && typeof input.scope.start === "string" && typeof input.scope.end === "string")) {
+    return structuredGuidanceError(`Invalid structured_edit scope. Correct syntax: ${SCOPE_EXAMPLE}. Keep start/end inside scope.`);
+  }
+
+  if (!Array.isArray(input.ops)) {
+    return structuredGuidanceError(`Invalid structured_edit arguments. Use ${OPS_EXAMPLE}.`);
+  }
+  if (input.ops.length === 0) {
+    return structuredGuidanceError(`Invalid structured_edit ops. Must contain at least one operation. Example: ${OPS_EXAMPLE}`);
+  }
+
+  for (const [index, op] of input.ops.entries()) {
+    if (!isRecord(op)) return structuredGuidanceError(`Invalid structured_edit ops[${index}]. Operation must be an object. Example: ${STRUCTURED_OP_EXAMPLES.replace_lines}`);
+    const error = validateStructuredOpShape(op, index);
+    if (error) return structuredGuidanceError(error);
+  }
+
+  return input;
 }
 
 export default function (pi: ExtensionAPI) {

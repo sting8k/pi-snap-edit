@@ -371,7 +371,7 @@ describe("structured edits", () => {
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
 
-  it("returns concise syntax guidance for malformed structured_edit scope", async () => {
+  it("returns concise syntax guidance for malformed structured_edit arguments", async () => {
     const registered: any[] = [];
     snapEditExtension({
       on() {},
@@ -386,16 +386,35 @@ describe("structured edits", () => {
     const tool = registered.find((entry) => entry.name === "structured_edit");
     assert.ok(tool);
 
-    const prepared = tool.prepareArguments({
-      path: "style.css",
-      scope: '\n<parameter name="start">70:8b1',
-      end: "73:8a8",
-      ops: [{ type: "substitute", old: "a", new: "b", count: 1 }],
-    });
+    const executePrepared = (input: Record<string, unknown>) => {
+      const prepared = tool.prepareArguments(input);
+      return tool.execute("call-1", prepared, undefined, undefined, { cwd: process.cwd() });
+    };
 
     await assert.rejects(
-      () => tool.execute("call-1", prepared, undefined, undefined, { cwd: process.cwd() }),
-      /Invalid scope\. Correct syntax: "scope": \{"start":"70:8b1","end":"73:8a8"\}\. Keep start\/end inside scope\./,
+      () => executePrepared({
+        path: "style.css",
+        scope: '\n<parameter name="start">70:8b1',
+        end: "73:8a8",
+        ops: [{ type: "substitute", old: "a", new: "b", count: 1 }],
+      }),
+      /Invalid structured_edit scope\. Correct syntax: "scope":\{"start":"70:8b1","end":"73:8a8"\}\. Keep start\/end inside scope\./,
+    );
+    await assert.rejects(
+      () => executePrepared({ path: "style.css", type: "replace_lines", start: "1:aaa", lines: ["x"] }),
+      /Invalid structured_edit arguments\. Use "ops":\[/,
+    );
+    await assert.rejects(
+      () => executePrepared({ path: "style.css", ops: [{ type: "replace_range", start: "1:aaa", end: "2:bbb", lines: ["x"] }] }),
+      /Invalid structured_edit ops\[0\]\. Allowed types: substitute, replace_lines, delete_lines, insert_before, insert_after\. For range replacement use: \{"type":"replace_lines"/,
+    );
+    await assert.rejects(
+      () => executePrepared({ path: "style.css", ops: [{ type: "replace_lines", start: "1:aaa" }] }),
+      /Invalid structured_edit ops\[0\] replace_lines\. Correct syntax: \{"type":"replace_lines","start":"70:8b1","end":"73:8a8","lines":\["\.\.\."\]\}/,
+    );
+    await assert.rejects(
+      () => executePrepared({ path: "style.css", ops: [{ type: "insert_after", start: "1:aaa", lines: ["x"] }] }),
+      /Invalid structured_edit ops\[0\] insert_after\. Correct syntax: \{"type":"insert_after","anchor":"70:8b1","lines":\["\.\.\."\]\}/,
     );
   });
 
