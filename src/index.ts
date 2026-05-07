@@ -17,7 +17,6 @@ const QuickEditParams = Type.Object({
     }),
     { minItems: 1, description: "Hash-anchored edits to apply atomically." },
   ),
-  diff: Type.Optional(Type.Boolean({ description: "Return a compact before/after diff." })),
 });
 
 export type Edit = {
@@ -184,7 +183,7 @@ export function hashReadText(text: string, offsetInput: unknown): string {
   return hashLines(lines, startLine) + notice;
 }
 
-export async function applyQuickEdits(absolutePath: string, edits: Edit[], showDiff: boolean): Promise<string> {
+export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Promise<string> {
   if (edits.length === 0) throw new Error("edits must contain at least one replacement");
 
   const content = await fs.readFile(absolutePath, "utf8");
@@ -285,10 +284,8 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[], showD
   }
 
   const parts: string[] = [];
-  if (showDiff) {
-    const diff = formatDiffs(diffs);
-    if (diff) parts.push(diff);
-  }
+  const diff = formatDiffs(diffs);
+  if (diff) parts.push(diff);
   if (contexts.length > 0) parts.push(contexts.join("\n---\n"));
   return parts.join("\n\n") || "Edits applied.";
 }
@@ -315,7 +312,6 @@ export default function (pi: ExtensionAPI) {
       "Prefer quick_edit after read when exact current anchors are available.",
       "Use start/end anchors copied from read output. Both line and hash are required.",
       "Use lines for replacement text. Each array entry is one output line; use lines: [] to delete a line or range.",
-      "Use diff: true when you need a compact before/after diff.",
     ],
     parameters: QuickEditParams,
 
@@ -335,7 +331,7 @@ export default function (pi: ExtensionAPI) {
         };
       });
 
-      const text = await withFileMutationQueue(absolutePath, () => applyQuickEdits(absolutePath, edits, params.diff === true));
+      const text = await withFileMutationQueue(absolutePath, () => applyQuickEdits(absolutePath, edits));
       return { content: [{ type: "text" as const, text }], details: undefined };
     },
 

@@ -36,8 +36,7 @@ Read first, then use anchors with `quick_edit`:
       "end": "46:e1d",
       "lines": ["replacement line 1", "replacement line 2"]
     }
-  ],
-  "diff": true
+  ]
 }
 ```
 
