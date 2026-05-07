@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { formatHash, hashLines, lineHash } from "./anchors.js";
-import { CONTEXT_LINES, formatDiffs, type EditDiff } from "./diff.js";
+import { CONTEXT_LINES, formatContexts, formatDiffs, type ContextRange, type EditDiff } from "./diff.js";
 import type { Edit } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
@@ -83,7 +83,7 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
 
   const ordered = edits.map((_, i) => i).sort((a, b) => edits[a]!.startLine - edits[b]!.startLine);
   let offset = 0;
-  const contexts: string[] = [];
+  const contextRanges: ContextRange[] = [];
   const diffs: EditDiff[] = [];
 
   for (const idx of ordered) {
@@ -97,9 +97,7 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
 
     const contextStart = Math.max(0, adjusted - CONTEXT_LINES);
     const contextEnd = Math.min(updated.length, adjusted + newLines.length + CONTEXT_LINES);
-    if (contextStart < contextEnd) {
-      contexts.push(hashLines(updated.slice(contextStart, contextEnd), contextStart + 1));
-    }
+    contextRanges.push({ startIndex: contextStart, endIndex: contextEnd });
 
     offset += newLines.length - oldCount;
   }
@@ -107,6 +105,7 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
   const parts: string[] = [];
   const diff = formatDiffs(diffs);
   if (diff) parts.push(diff);
-  if (contexts.length > 0) parts.push(contexts.join("\n---\n"));
+  const contexts = formatContexts(updated, contextRanges);
+  if (contexts) parts.push(contexts);
   return parts.join("\n\n") || "Edits applied.";
 }

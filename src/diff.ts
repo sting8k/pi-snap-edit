@@ -1,4 +1,4 @@
-import { formatHash, lineHash } from "./anchors.js";
+import { formatHash, hashLines, lineHash } from "./anchors.js";
 
 export const CONTEXT_LINES = 5;
 
@@ -8,6 +8,29 @@ export type EditDiff = {
   oldLines: string[];
   newLines: string[];
 };
+
+export type ContextRange = {
+  startIndex: number;
+  endIndex: number;
+};
+
+export function formatContexts(lines: string[], ranges: ContextRange[]): string {
+  const ordered = ranges
+    .filter((range) => range.startIndex < range.endIndex)
+    .sort((a, b) => a.startIndex - b.startIndex);
+  const merged: ContextRange[] = [];
+
+  for (const range of ordered) {
+    const previous = merged.at(-1);
+    if (previous && range.startIndex <= previous.endIndex) {
+      previous.endIndex = Math.max(previous.endIndex, range.endIndex);
+    } else {
+      merged.push({ ...range });
+    }
+  }
+
+  return merged.map((range) => hashLines(lines.slice(range.startIndex, range.endIndex), range.startIndex + 1)).join("\n---\n");
+}
 
 export function formatDiffs(diffs: EditDiff[]): string {
   if (diffs.length === 0) return "";

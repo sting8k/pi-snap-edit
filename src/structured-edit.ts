@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { formatHash, hashLines, lineHash, parseAnchor } from "./anchors.js";
-import { CONTEXT_LINES, formatDiffs, type EditDiff } from "./diff.js";
+import { CONTEXT_LINES, formatContexts, formatDiffs, type ContextRange, type EditDiff } from "./diff.js";
 import type { AnchorRangeInput, StructuredEditOp } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
@@ -80,9 +80,19 @@ export async function applyStructuredEdits(
   const applyInsert = (anchor: string, insertedLines: string[], after: boolean, label: string) => {
     const lineNo = validateAnchorLine(originalLines, anchor, label);
     const currentLine = adjustedLine(lineNo);
-    const oldLine = currentLines[currentLine - 1]!;
-    const newLines = after ? [oldLine, ...insertedLines] : [...insertedLines, oldLine];
-    applyLineReplacement({ start: anchor }, newLines, label);
+    const insertIndex = after ? currentLine : currentLine - 1;
+    currentLines.splice(insertIndex, 0, ...insertedLines);
+    diffs.push({
+      oldStart: after ? lineNo + 1 : lineNo,
+      newStart: insertIndex + 1,
+      oldLines: [],
+      newLines: insertedLines,
+    });
+    appliedLineEdits.push({
+      startLine: after ? lineNo + 1 : lineNo,
+      endLine: after ? lineNo : lineNo - 1,
+      delta: insertedLines.length,
+    });
   };
 
   const applySubstitute = (op: Extract<StructuredEditOp, { type: "substitute" }>) => {
@@ -117,23 +127,28 @@ export async function applyStructuredEdits(
     }
   };
 
-  for (const op of ops) {
-    switch (op.type) {
-      case "substitute":
-        applySubstitute(op);
-        break;
-      case "replace_lines":
-        applyLineReplacement(op.end ? { start: op.start, end: op.end } : { start: op.start }, op.lines, "replace_lines");
-        break;
-      case "delete_lines":
-        applyLineReplacement(op.end ? { start: op.start, end: op.end } : { start: op.start }, [], "delete_lines");
-        break;
-      case "insert_before":
-        applyInsert(op.anchor, op.lines, false, "insert_before");
-        break;
-      case "insert_after":
-        applyInsert(op.anchor, op.lines, true, "insert_after");
-        break;
+  for (const [i, op] of ops.entries()) {
+    try {
+      switch (op.type) {
+        case "substitute":
+          applySubstitute(op);
+          break;
+        case "replace_lines":
+          applyLineReplacement(op.end ? { start: op.start, end: op.end } : { start: op.start }, op.lines, "replace_lines");
+          break;
+        case "delete_lines":
+          applyLineReplacement(op.end ? { start: op.start, end: op.end } : { start: op.start }, [], "delete_lines");
+          break;
+        case "insert_before":
+          applyInsert(op.anchor, op.lines, false, "insert_before");
+          break;
+        case "insert_after":
+          applyInsert(op.anchor, op.lines, true, "insert_after");
+          break;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`op[${i}] ${op.type}: ${message}`);
     }
   }
 
@@ -145,19 +160,18 @@ export async function applyStructuredEdits(
 
   await fs.writeFile(absolutePath, newContent, "utf8");
 
-  const contexts: string[] = [];
+  const contextRanges: ContextRange[] = [];
   for (const diff of diffs) {
     const startIndex = Math.max(0, diff.newStart - 1 - CONTEXT_LINES);
     const newLineCount = Math.max(1, diff.newLines.length);
     const endIndex = Math.min(currentLines.length, diff.newStart - 1 + newLineCount + CONTEXT_LINES);
-    if (startIndex < endIndex) {
-      contexts.push(hashLines(currentLines.slice(startIndex, endIndex), startIndex + 1));
-    }
+    contextRanges.push({ startIndex, endIndex });
   }
 
   const parts: string[] = [];
   const diff = formatDiffs(diffs);
   if (diff) parts.push(diff);
-  if (contexts.length > 0) parts.push(contexts.join("\n---\n"));
+  const contexts = formatContexts(currentLines, contextRanges);
+  if (contexts) parts.push(contexts);
   return parts.join("\n\n") || "Structured edit applied.";
 }

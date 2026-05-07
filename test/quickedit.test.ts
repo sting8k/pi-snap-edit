@@ -250,7 +250,7 @@ describe("structured edits", () => {
 
     await assert.rejects(
       () => applyStructuredEdits(file, [{ type: "substitute", old: "beta", new: "BETA", count: 2 }]),
-      /expected 2 occurrence/,
+      /op\[0\] substitute: substitute expected 2 occurrence/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
@@ -259,22 +259,26 @@ describe("structured edits", () => {
     const original = ["start", "middle", "remove", "end"];
     const file = await tempFile("sample.txt", `${original.join("\n")}\n`);
 
-    await applyStructuredEdits(file, [
+    const result = await applyStructuredEdits(file, [
       { type: "insert_after", anchor: anchorFor(original, 1), lines: ["inserted"] },
       { type: "replace_lines", start: anchorFor(original, 2), lines: ["MIDDLE", "middle-extra"] },
       { type: "delete_lines", start: anchorFor(original, 3) },
     ]);
 
     assert.equal(await readFile(file, "utf8"), "start\ninserted\nMIDDLE\nmiddle-extra\nend\n");
+    assert.doesNotMatch(result, /\n---\n/);
   });
 
   it("appends after the last anchored line with insert_after", async () => {
     const original = ["one", "two"];
     const file = await tempFile("sample.txt", original.join("\n"));
 
-    await applyStructuredEdits(file, [{ type: "insert_after", anchor: anchorFor(original, 2), lines: ["three", "four"] }]);
+    const result = await applyStructuredEdits(file, [{ type: "insert_after", anchor: anchorFor(original, 2), lines: ["three", "four"] }]);
 
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\nfour");
+    assert.doesNotMatch(result, /- 2:.*\|two/);
+    assert.match(result, /\+ 3:.*\|three/);
+    assert.match(result, /\+ 4:.*\|four/);
   });
 
   it("can substitute the current whole file after an earlier line operation", async () => {
@@ -312,7 +316,7 @@ describe("structured edits", () => {
 
     await assert.rejects(
       () => applyStructuredEdits(file, [{ type: "replace_lines", start: anchorFor(staleLines, 2), lines: ["TWO"] }]),
-      /hash mismatch at replace_lines start line 2/,
+      /op\[0\] replace_lines: hash mismatch at replace_lines start line 2/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
@@ -341,7 +345,7 @@ describe("structured edits", () => {
         { type: "substitute", old: "alpha", new: "ALPHA" },
         { type: "substitute", old: "missing", new: "MISSING" },
       ]),
-      /expected 1 occurrence/,
+      /op\[1\] substitute: substitute expected 1 occurrence/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
