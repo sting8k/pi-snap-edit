@@ -8,7 +8,7 @@ Minimal Pi extension for hash-anchored and structured edits.
 - Adds `quick_edit` (`quick-edit`) for direct anchored line/range replacements.
 - Adds `structured_edit` (`structured-edit`) for scoped counted substitutions and anchored insert/delete/replace operations.
 - Does not override Pi's built-in `edit` tool, but removes `edit` from active tools so agents use `quick_edit` or `structured_edit`.
-- No config, slash commands, widgets, MCP, or external Tilth dependency.
+- No config, slash commands, widgets, MCP, or external editor dependency.
 
 ## Install
 
@@ -71,3 +71,5 @@ Use `structured_edit` when several small operations inside a long block are clea
 ```
 
 `substitute` is single-line and uses `count` as an assertion. Use `replace_lines`, `delete_lines`, `insert_before`, or `insert_after` for line-oriented changes.
+
+For EOF append, use `structured_edit` with `insert_after` on the last anchored line. `quick_edit` intentionally edits existing anchored lines/ranges only; it does not accept synthetic line numbers past EOF.

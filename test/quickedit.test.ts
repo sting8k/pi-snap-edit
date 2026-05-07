@@ -268,6 +268,15 @@ describe("structured edits", () => {
     assert.equal(await readFile(file, "utf8"), "start\ninserted\nMIDDLE\nmiddle-extra\nend\n");
   });
 
+  it("appends after the last anchored line with insert_after", async () => {
+    const original = ["one", "two"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await applyStructuredEdits(file, [{ type: "insert_after", anchor: anchorFor(original, 2), lines: ["three", "four"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\nfour");
+  });
+
   it("can substitute the current whole file after an earlier line operation", async () => {
     const original = ["start", "middle", "end"];
     const file = await tempFile("sample.txt", `${original.join("\n")}\n`);
@@ -278,6 +287,90 @@ describe("structured edits", () => {
     ]);
 
     assert.equal(await readFile(file, "utf8"), "start\nMIDDLE\nMIDDLE\nend\n");
+  });
+
+  it("rejects stale scope anchors atomically", async () => {
+    const original = ["start", "body", "end"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+    const staleScopeLines = ["start", "OLD", "end"];
+
+    await assert.rejects(
+      () => applyStructuredEdits(
+        file,
+        [{ type: "substitute", old: "body", new: "BODY" }],
+        { start: anchorFor(staleScopeLines, 2), end: anchorFor(original, 3) },
+      ),
+      /hash mismatch at scope start line 2/,
+    );
+    assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("rejects stale operation anchors atomically", async () => {
+    const original = ["one", "two", "three"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+    const staleLines = ["one", "OLD", "three"];
+
+    await assert.rejects(
+      () => applyStructuredEdits(file, [{ type: "replace_lines", start: anchorFor(staleLines, 2), lines: ["TWO"] }]),
+      /hash mismatch at replace_lines start line 2/,
+    );
+    assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("rejects reversed and out-of-bounds line ranges atomically", async () => {
+    const original = ["one", "two"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(
+      () => applyStructuredEdits(file, [{ type: "replace_lines", start: anchorFor(original, 2), end: anchorFor(original, 1), lines: ["x"] }]),
+      /end < start/,
+    );
+    await assert.rejects(
+      () => applyStructuredEdits(file, [{ type: "delete_lines", start: "3:dc5" }]),
+      /out of bounds/,
+    );
+    assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("rolls back earlier in-memory changes when a later operation fails", async () => {
+    const original = ["alpha", "beta"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(
+      () => applyStructuredEdits(file, [
+        { type: "substitute", old: "alpha", new: "ALPHA" },
+        { type: "substitute", old: "missing", new: "MISSING" },
+      ]),
+      /expected 1 occurrence/,
+    );
+    assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("rejects invalid substitute operations before writing", async () => {
+    const original = ["alpha"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "", new: "x" }]), /old must not be empty/);
+    await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "alpha", new: "alpha" }]), /must differ/);
+    await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "alpha", new: "a\nb" }]), /single-line strings/);
+    assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("replaces multiple occurrences on one line when count matches", async () => {
+    const file = await tempFile("sample.txt", "foo foo\nbar");
+
+    await applyStructuredEdits(file, [{ type: "substitute", old: "foo", new: "baz", count: 2 }]);
+
+    assert.equal(await readFile(file, "utf8"), "baz baz\nbar");
+  });
+
+  it("preserves CRLF for structured line operations", async () => {
+    const original = ["one", "two", "three"];
+    const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree");
+
+    await applyStructuredEdits(file, [{ type: "insert_after", anchor: anchorFor(original, 2), lines: ["inserted"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\r\ntwo\r\ninserted\r\nthree");
   });
 
   it("preserves CRLF and absence of trailing newline", async () => {
