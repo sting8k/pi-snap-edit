@@ -1,6 +1,16 @@
 # pi-snap-edit
 
-Fast, precise, script-free edits for Pi agents.
+Fast, precise, script-free edits for Pi agents. Experimental.
+
+## Why
+Pain points from my own agent workflow:
+
+- Pi's built-in edit tools are safe and precise, but exact replacements can use a lot of tokens.
+- Small mismatches can cause retries, especially in large or messy edits.
+- Escaped strings, quotes, backslashes, regex, and templates can turn exact replacements into escape hell.
+- For complex changes, agents often use ad-hoc Python scripts, which are harder to review.
+
+`pi-snap-edit` is experimental. It aims to make edits fast, anchored, atomic, and script-free.
 
 ## Behavior
 
@@ -12,7 +22,13 @@ Fast, precise, script-free edits for Pi agents.
 
 ## Install
 
-Install from GitHub:
+Install from npm:
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+Or install from GitHub:
 
 ```bash
 pi install git:github.com/sting8k/pi-snap-edit
