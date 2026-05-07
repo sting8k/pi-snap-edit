@@ -19,6 +19,54 @@ const QuickEditParams = Type.Object({
   ),
 });
 
+const StructuredEditParams = Type.Object({
+  path: Type.String({ description: "Path to the file to edit." }),
+  scope: Type.Optional(Type.Object({
+    start: Type.String({ description: "Start anchor limiting substitute operations." }),
+    end: Type.String({ description: "Inclusive end anchor limiting substitute operations." }),
+  })),
+  ops: Type.Array(
+    Type.Union([
+      Type.Object({
+        type: Type.Literal("substitute"),
+        old: Type.String({ description: "Exact substring to replace. Newlines are not allowed; use line ops for multi-line changes." }),
+        new: Type.String({ description: "Replacement substring. Newlines are not allowed; use line ops for multi-line changes." }),
+        count: Type.Optional(Type.Integer({ minimum: 1, description: "Required number of replacements. Defaults to 1." })),
+      }),
+      Type.Object({
+        type: Type.Literal("replace_lines"),
+        start: Type.String({ description: "Start anchor from read output." }),
+        end: Type.Optional(Type.String({ description: "Optional inclusive end anchor from read output." })),
+        lines: Type.Array(Type.String(), { description: "Replacement lines. Empty array deletes the range." }),
+      }),
+      Type.Object({
+        type: Type.Literal("delete_lines"),
+        start: Type.String({ description: "Start anchor from read output." }),
+        end: Type.Optional(Type.String({ description: "Optional inclusive end anchor from read output." })),
+      }),
+      Type.Object({
+        type: Type.Literal("insert_before"),
+        anchor: Type.String({ description: "Anchor line to insert before." }),
+        lines: Type.Array(Type.String(), { minItems: 1, description: "Lines to insert before the anchor." }),
+      }),
+      Type.Object({
+        type: Type.Literal("insert_after"),
+        anchor: Type.String({ description: "Anchor line to insert after." }),
+        lines: Type.Array(Type.String(), { minItems: 1, description: "Lines to insert after the anchor." }),
+      }),
+    ]),
+    { minItems: 1, description: "Structured edit operations to apply atomically in order." },
+  ),
+});
+
+type AnchorRangeInput = { start: string; end?: string };
+
+type StructuredEditOp =
+  | { type: "substitute"; old: string; new: string; count?: number }
+  | { type: "replace_lines"; start: string; end?: string; lines: string[] }
+  | { type: "delete_lines"; start: string; end?: string }
+  | { type: "insert_before"; anchor: string; lines: string[] }
+  | { type: "insert_after"; anchor: string; lines: string[] };
 export type Edit = {
   startLine: number;
   startHash: number;
@@ -132,7 +180,10 @@ export function summarizeQuickEditOutput(text: string): QuickEditRenderSummary {
 
 export function preferQuickEditTools(activeTools: string[]): string[] {
   const withoutEdit = activeTools.filter((toolName) => toolName !== "edit");
-  return withoutEdit.includes("quick_edit") ? withoutEdit : [...withoutEdit, "quick_edit"];
+  return ["quick_edit", "structured_edit"].reduce(
+    (tools, toolName) => (tools.includes(toolName) ? tools : [...tools, toolName]),
+    withoutEdit,
+  );
 }
 
 type QuickEditTheme = {
@@ -290,6 +341,163 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
   return parts.join("\n\n") || "Edits applied.";
 }
 
+function validateAnchorLine(lines: string[], anchorText: string, label: string): number {
+  const anchor = parseAnchor(anchorText);
+  if (!anchor) throw new Error(`${label}: invalid anchor '${anchorText}'`);
+  const { line: lineNo, hash: expectedHash } = anchor;
+  const total = lines.length;
+  if (lineNo < 1 || lineNo > total) {
+    throw new Error(`${label} line ${lineNo} out of bounds (file has ${total} lines)`);
+  }
+
+  const actualHash = lineHash(lines[lineNo - 1]!);
+  if (actualHash !== expectedHash) {
+    const contextStart = Math.max(0, lineNo - 3);
+    const contextEnd = Math.min(total, lineNo + 2);
+    throw new Error(
+      `hash mismatch at ${label} line ${lineNo} (expected ${formatHash(expectedHash)}, got ${formatHash(actualHash)}):\n` +
+        hashLines(lines.slice(contextStart, contextEnd), contextStart + 1),
+    );
+  }
+
+  return lineNo;
+}
+
+function validateAnchorRange(lines: string[], range: AnchorRangeInput, label: string): { startLine: number; endLine: number } {
+  const startLine = validateAnchorLine(lines, range.start, `${label} start`);
+  const endLine = range.end ? validateAnchorLine(lines, range.end, `${label} end`) : startLine;
+  if (endLine < startLine) {
+    throw new Error(`Invalid ${label} range: ${startLine}-${endLine} (end < start)`);
+  }
+  return { startLine, endLine };
+}
+
+function countSubstring(text: string, needle: string): number {
+  return text.split(needle).length - 1;
+}
+
+type AppliedLineEdit = { startLine: number; endLine: number; delta: number };
+
+export async function applyStructuredEdits(
+  absolutePath: string,
+  ops: StructuredEditOp[],
+  scope?: { start: string; end: string },
+): Promise<string> {
+  if (ops.length === 0) throw new Error("ops must contain at least one operation");
+
+  const content = await fs.readFile(absolutePath, "utf8");
+  const originalLines = splitLines(content);
+  const currentLines = [...originalLines];
+  const appliedLineEdits: AppliedLineEdit[] = [];
+  const diffs: EditDiff[] = [];
+
+  const scopeRange = scope ? validateAnchorRange(originalLines, scope, "scope") : undefined;
+
+  const adjustedLine = (originalLine: number): number => {
+    let adjusted = originalLine;
+    for (const edit of appliedLineEdits) {
+      if (originalLine >= edit.startLine && originalLine <= edit.endLine) {
+        throw new Error(`anchor line ${originalLine} was already modified by an earlier structured_edit operation`);
+      }
+      if (originalLine > edit.endLine) adjusted += edit.delta;
+    }
+    return adjusted;
+  };
+
+  const applyLineReplacement = (range: AnchorRangeInput, newLines: string[], label: string) => {
+    const { startLine, endLine } = validateAnchorRange(originalLines, range, label);
+    const currentStart = adjustedLine(startLine);
+    const currentEnd = adjustedLine(endLine);
+    const oldLines = currentLines.slice(currentStart - 1, currentEnd);
+    currentLines.splice(currentStart - 1, currentEnd - currentStart + 1, ...newLines);
+    diffs.push({ oldStart: startLine, newStart: currentStart, oldLines, newLines });
+    appliedLineEdits.push({ startLine, endLine, delta: newLines.length - (endLine - startLine + 1) });
+  };
+
+  const applyInsert = (anchor: string, insertedLines: string[], after: boolean, label: string) => {
+    const lineNo = validateAnchorLine(originalLines, anchor, label);
+    const currentLine = adjustedLine(lineNo);
+    const oldLine = currentLines[currentLine - 1]!;
+    const newLines = after ? [oldLine, ...insertedLines] : [...insertedLines, oldLine];
+    applyLineReplacement({ start: anchor }, newLines, label);
+  };
+
+  const applySubstitute = (op: Extract<StructuredEditOp, { type: "substitute" }>) => {
+    if (op.old.length === 0) throw new Error("substitute old must not be empty");
+    if (op.old.includes("\n") || op.old.includes("\r") || op.new.includes("\n") || op.new.includes("\r")) {
+      throw new Error("substitute old/new must be single-line strings; use line operations for multi-line changes");
+    }
+    if (op.old === op.new) throw new Error("substitute old and new must differ");
+
+    const expectedCount = op.count ?? 1;
+    const currentStart = scopeRange ? adjustedLine(scopeRange.startLine) : 1;
+    const currentEnd = scopeRange ? adjustedLine(scopeRange.endLine) : currentLines.length;
+
+    let actualCount = 0;
+    for (let i = currentStart - 1; i < currentEnd; i++) {
+      actualCount += countSubstring(currentLines[i]!, op.old);
+    }
+    if (actualCount !== expectedCount) {
+      throw new Error(
+        `substitute expected ${expectedCount} occurrence(s) of ${JSON.stringify(op.old)} but found ${actualCount}` +
+          (scopeRange ? " in scope" : ""),
+      );
+    }
+
+    for (let i = currentStart - 1; i < currentEnd; i++) {
+      const before = currentLines[i]!;
+      const after = before.split(op.old).join(op.new);
+      if (after !== before) {
+        currentLines[i] = after;
+        diffs.push({ oldStart: i + 1, newStart: i + 1, oldLines: [before], newLines: [after] });
+      }
+    }
+  };
+
+  for (const op of ops) {
+    switch (op.type) {
+      case "substitute":
+        applySubstitute(op);
+        break;
+      case "replace_lines":
+        applyLineReplacement(op.end ? { start: op.start, end: op.end } : { start: op.start }, op.lines, "replace_lines");
+        break;
+      case "delete_lines":
+        applyLineReplacement(op.end ? { start: op.start, end: op.end } : { start: op.start }, [], "delete_lines");
+        break;
+      case "insert_before":
+        applyInsert(op.anchor, op.lines, false, "insert_before");
+        break;
+      case "insert_after":
+        applyInsert(op.anchor, op.lines, true, "insert_after");
+        break;
+    }
+  }
+
+  const lineEnding = detectLineEnding(content);
+  const hasTrailingNewline = content.endsWith("\n");
+  let newContent = currentLines.join(lineEnding);
+  if (hasTrailingNewline) newContent += lineEnding;
+  if (newContent === content) throw new Error("structured_edit made no changes");
+
+  await fs.writeFile(absolutePath, newContent, "utf8");
+
+  const contexts: string[] = [];
+  for (const diff of diffs) {
+    const startIndex = Math.max(0, diff.newStart - 1 - CONTEXT_LINES);
+    const newLineCount = Math.max(1, diff.newLines.length);
+    const endIndex = Math.min(currentLines.length, diff.newStart - 1 + newLineCount + CONTEXT_LINES);
+    if (startIndex < endIndex) {
+      contexts.push(hashLines(currentLines.slice(startIndex, endIndex), startIndex + 1));
+    }
+  }
+
+  const parts: string[] = [];
+  const diff = formatDiffs(diffs);
+  if (diff) parts.push(diff);
+  if (contexts.length > 0) parts.push(contexts.join("\n---\n"));
+  return parts.join("\n\n") || "Structured edit applied.";
+}
 export default function (pi: ExtensionAPI) {
   pi.on("tool_result", (event) => {
     if (event.toolName !== "read" || event.isError) return;
@@ -353,6 +561,43 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  pi.registerTool({
+    name: "structured_edit",
+    label: "structured-edit",
+    description:
+      "Edit a file with structured operations. Use substitute for counted single-line substring replacements inside an optional anchored scope, and use anchored line operations for insert/delete/replace. This tool is atomic: any invalid anchor, count mismatch, or stale hash rejects the whole batch.",
+    promptSnippet: "Apply scoped counted substitutions and anchored line operations atomically",
+    promptGuidelines: [
+      "Use structured_edit for complex edits inside a long block when several small substitutions/inserts/deletes avoid rewriting the whole block.",
+      "Use scope with start/end anchors to limit substitute operations to one block from read output.",
+      "Use substitute for single-line substring replacements with count as an assertion. Use line operations for multi-line changes.",
+      "Use quick_edit instead when you only need one simple anchored range replacement.",
+    ],
+    parameters: StructuredEditParams,
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const absolutePath = resolvePath(ctx.cwd, params.path);
+      const text = await withFileMutationQueue(absolutePath, () => applyStructuredEdits(absolutePath, params.ops, params.scope));
+      return { content: [{ type: "text" as const, text }], details: undefined };
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) return new Text(`${color(theme, "dim", "↳")} ${color(theme, "muted", "applying structured-edit...")}`, 0, 0);
+
+      const text = result.content?.filter((c) => c.type === "text").map((c) => c.text).join("\n") ?? "";
+      if ((result as any).isError) return new Text(color(theme, "error", text.trim() || "structured-edit failed"), 0, 0);
+
+      const summary = summarizeQuickEditOutput(text);
+      const stats = summary.hasDiff
+        ? ` ${color(theme, "success", `+${summary.additions}`)} ${color(theme, "error", `-${summary.removals}`)}`
+        : "";
+      const hint = !expanded && text ? ` ${color(theme, "muted", `(${keyHint("app.tools.expand", "to expand")})`)}` : "";
+      const header = `${color(theme, "dim", "↳")} ${color(theme, "success", "structured-edit applied")}${stats}${hint}`;
+
+      if (!expanded || !text) return new Text(header, 0, 0);
+      return new Text(`${header}\n${renderQuickEditOutput(theme, text)}`, 0, 0);
+    },
+  });
   pi.on("session_start", () => {
     const activeTools = pi.getActiveTools();
     const preferredTools = preferQuickEditTools(activeTools);

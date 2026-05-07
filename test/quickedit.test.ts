@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   applyQuickEdits,
+  applyStructuredEdits,
   formatHash,
   hashLines,
   hashReadText,
@@ -34,6 +35,10 @@ function editFor(lines: string[], startLine: number, endLine: number, replacemen
     endHash: lineHash(lines[endLine - 1] ?? ""),
     lines: replacementLines,
   };
+}
+
+function anchorFor(lines: string[], line: number): string {
+  return `${line}:${formatHash(lineHash(lines[line - 1] ?? ""))}`;
 }
 
 afterEach(async () => {
@@ -113,8 +118,8 @@ describe("quick-edit renderer helpers", () => {
     assert.deepEqual(summarizeQuickEditOutput("1:dab|alpha"), { additions: 0, removals: 0, hasDiff: false });
   });
   it("prefers quick_edit by removing built-in edit from active tools", () => {
-    assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit"]);
-    assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "edit"]), ["read", "quick_edit"]);
+    assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit", "structured_edit"]);
+    assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "edit"]), ["read", "quick_edit", "structured_edit"]);
   });
 });
 
@@ -212,5 +217,73 @@ describe("quick edits", () => {
       /end < start/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+});
+
+describe("structured edits", () => {
+  it("applies counted substitutions inside an anchored scope only", async () => {
+    const original = [
+      "function build() {",
+      "  logger.debug(\"a\");",
+      "  logger.debug(\"b\");",
+      "}",
+      "logger.debug(\"outside\");",
+    ];
+    const file = await tempFile("sample.ts", `${original.join("\n")}\n`);
+
+    const result = await applyStructuredEdits(
+      file,
+      [{ type: "substitute", old: "logger.debug", new: "logger.trace", count: 2 }],
+      { start: anchorFor(original, 1), end: anchorFor(original, 4) },
+    );
+
+    assert.match(result, /logger\.trace/);
+    assert.equal(
+      await readFile(file, "utf8"),
+      'function build() {\n  logger.trace("a");\n  logger.trace("b");\n}\nlogger.debug("outside");\n',
+    );
+  });
+
+  it("rejects substitute count mismatches atomically", async () => {
+    const original = ["alpha", "beta", "gamma"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(
+      () => applyStructuredEdits(file, [{ type: "substitute", old: "beta", new: "BETA", count: 2 }]),
+      /expected 2 occurrence/,
+    );
+    assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("applies anchored insert, replace, and delete operations in order", async () => {
+    const original = ["start", "middle", "remove", "end"];
+    const file = await tempFile("sample.txt", `${original.join("\n")}\n`);
+
+    await applyStructuredEdits(file, [
+      { type: "insert_after", anchor: anchorFor(original, 1), lines: ["inserted"] },
+      { type: "replace_lines", start: anchorFor(original, 2), lines: ["MIDDLE", "middle-extra"] },
+      { type: "delete_lines", start: anchorFor(original, 3) },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "start\ninserted\nMIDDLE\nmiddle-extra\nend\n");
+  });
+
+  it("can substitute the current whole file after an earlier line operation", async () => {
+    const original = ["start", "middle", "end"];
+    const file = await tempFile("sample.txt", `${original.join("\n")}\n`);
+
+    await applyStructuredEdits(file, [
+      { type: "insert_after", anchor: anchorFor(original, 1), lines: ["middle"] },
+      { type: "substitute", old: "middle", new: "MIDDLE", count: 2 },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "start\nMIDDLE\nMIDDLE\nend\n");
+  });
+
+  it("preserves CRLF and absence of trailing newline", async () => {
+    const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree");
+    await applyStructuredEdits(file, [{ type: "substitute", old: "two", new: "TWO" }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree");
   });
 });

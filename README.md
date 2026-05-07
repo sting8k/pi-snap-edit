@@ -1,12 +1,13 @@
 # pi-quickedit
 
-Minimal Pi extension for hash-anchored edits.
+Minimal Pi extension for hash-anchored and structured edits.
 
 ## Behavior
 
 - Hooks Pi's core `read` result and adds `<line>:<hash>|<content>` anchors to text output.
-- Adds a new `quick_edit` tool, displayed as `quick-edit`.
-- Does not override Pi's built-in `edit` tool, but removes `edit` from active tools so agents use `quick_edit`.
+- Adds `quick_edit` (`quick-edit`) for direct anchored line/range replacements.
+- Adds `structured_edit` (`structured-edit`) for scoped counted substitutions and anchored insert/delete/replace operations.
+- Does not override Pi's built-in `edit` tool, but removes `edit` from active tools so agents use `quick_edit` or `structured_edit`.
 - No config, slash commands, widgets, MCP, or external Tilth dependency.
 
 ## Install
@@ -41,3 +42,32 @@ Read first, then use anchors with `quick_edit`:
 ```
 
 Omit `end` for a single-line replacement. Use `lines: []` to delete a line or range. Use `lines: [""]` to replace with one blank line.
+
+Use `structured_edit` when several small operations inside a long block are cleaner than rewriting the whole block:
+
+```json
+{
+  "path": "src/foo.ts",
+  "scope": { "start": "120:abc", "end": "260:def" },
+  "ops": [
+    {
+      "type": "substitute",
+      "old": "logger.debug",
+      "new": "logger.trace",
+      "count": 4
+    },
+    {
+      "type": "insert_after",
+      "anchor": "180:a3f",
+      "lines": ["  client.setTimeout(timeout);"]
+    },
+    {
+      "type": "delete_lines",
+      "start": "210:aaa",
+      "end": "214:bbb"
+    }
+  ]
+}
+```
+
+`substitute` is single-line and uses `count` as an assertion. Use `replace_lines`, `delete_lines`, `insert_before`, or `insert_after` for line-oriented changes.
