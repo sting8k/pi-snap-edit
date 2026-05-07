@@ -20,7 +20,7 @@ import {
 const tempDirs: string[] = [];
 
 async function tempFile(name: string, content: string): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), "pi-quickedit-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "pi-snap-edit-"));
   tempDirs.push(dir);
   const file = path.join(dir, name);
   await writeFile(file, content, "utf8");

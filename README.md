@@ -1,6 +1,6 @@
-# pi-quickedit
+# pi-snap-edit
 
-Minimal Pi extension for hash-anchored and structured edits.
+Fast, precise, script-free edits for Pi agents.
 
 ## Behavior
 
@@ -15,7 +15,7 @@ Minimal Pi extension for hash-anchored and structured edits.
 Install from GitHub:
 
 ```bash
-pi install git:github.com/sting8k/pi-quickedit
+pi install git:github.com/sting8k/pi-snap-edit
 ```
 
 Or load locally from this checkout:

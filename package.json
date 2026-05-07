@@ -1,12 +1,14 @@
 {
-  "name": "pi-quickedit",
+  "name": "pi-snap-edit",
   "version": "0.1.0",
-  "description": "Hash anchors for Pi read output plus safe quick_edit",
+  "description": "Fast, precise, script-free edits for Pi agents",
   "keywords": [
     "pi-package",
     "pi-extension",
-    "quick-edit",
-    "hash-anchored-edit",
+    "snap-edit",
+    "fast-edit",
+    "anchored-edit",
+    "atomic-edit",
     "coding-agent"
   ],
   "type": "module",
