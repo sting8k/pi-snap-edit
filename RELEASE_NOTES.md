@@ -1,13 +1,14 @@
-## pi-snap-edit v0.1.4
+## pi-snap-edit v0.1.5
 
-Adds concise structural preflight guidance for `structured_edit` arguments so invalid op shapes produce actionable errors instead of noisy union validation output.
+Improves agent guidance for choosing between `quick_edit` batching and `structured_edit`, and makes stale-anchor failures clearer.
 
 ### Changes
 
-- Added strict preflight checks for `structured_edit` argument structure before TypeBox union validation.
-- Added concise errors for malformed `scope`, missing/empty `ops`, non-object ops, invalid op types, and missing required op fields.
-- Included correct syntax examples in guidance errors for common structured operations.
-- Kept behavior strict: invalid inputs are rejected, not auto-normalized.
+- Clarified `quick_edit` guidance: use it for one range or batch independent ranges from the same latest read.
+- Clarified when to reuse anchors from latest tool output versus reading again.
+- Clarified `structured_edit` guidance for several edits in one file and anchored range replacements.
+- Reworded stale hash failures as stale anchors and explicitly state that no edits were applied.
+- Added current-content review guidance before retrying with a new anchor.
 
 ### Install
 
@@ -21,3 +22,4 @@ pi install npm:pi-snap-edit
 - `npm test` passed.
 - `git diff --check` passed.
 - `npm pack --dry-run` passed.
+- Live smoke test under `tmp/live-smoke` passed with actual `read`, `quick_edit`, and `structured_edit` tools.
