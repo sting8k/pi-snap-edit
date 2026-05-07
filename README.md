@@ -34,11 +34,11 @@ Read first, then use anchors with `quick_edit`:
     {
       "start": "42:a3f",
       "end": "46:e1d",
-      "content": "replacement text"
+      "lines": ["replacement line 1", "replacement line 2"]
     }
   ],
   "diff": true
 }
 ```
 
-Omit `end` for a single-line replacement. Use `content: ""` to delete a line or range.
+Omit `end` for a single-line replacement. Use `lines: []` to delete a line or range. Use `lines: [""]` to replace with one blank line.

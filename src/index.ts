@@ -13,7 +13,7 @@ const QuickEditParams = Type.Object({
     Type.Object({
       start: Type.String({ description: "Start anchor from read output, formatted as <line>:<hash>." }),
       end: Type.Optional(Type.String({ description: "Optional inclusive end anchor, formatted as <line>:<hash>." })),
-      content: Type.String({ description: "Replacement text for the anchored line/range. Empty string deletes it." }),
+      lines: Type.Array(Type.String(), { description: "Replacement lines for the anchored line/range. Empty array deletes it." }),
     }),
     { minItems: 1, description: "Hash-anchored edits to apply atomically." },
   ),
@@ -25,7 +25,7 @@ export type Edit = {
   startHash: number;
   endLine: number;
   endHash: number;
-  content: string;
+  lines: string[];
 };
 
 type EditDiff = {
@@ -251,7 +251,7 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[], showD
 
   for (const idx of indices) {
     const edit = edits[idx]!;
-    const replacement = edit.content === "" ? [] : edit.content.split(/\r?\n/);
+    const replacement = edit.lines;
     updated.splice(edit.startLine - 1, edit.endLine - edit.startLine + 1, ...replacement);
   }
 
@@ -270,7 +270,7 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[], showD
     const edit = edits[idx]!;
     const adjusted = Math.max(0, edit.startLine - 1 + offset);
     const oldCount = edit.endLine - edit.startLine + 1;
-    const newLines = edit.content === "" ? [] : edit.content.split(/\r?\n/);
+    const newLines = edit.lines;
     const newStart = Math.max(1, adjusted + 1);
 
     diffs.push({ oldStart: edit.startLine, newStart, oldLines: oldSnapshots[idx]!, newLines });
@@ -309,12 +309,12 @@ export default function (pi: ExtensionAPI) {
     name: "quick_edit",
     label: "quick-edit",
     description:
-      "Edit a file using hash anchors from read output. Replaces the inclusive range from start to end. If end is omitted, replaces one line. Hash mismatch means the file changed; re-read and retry. This tool is atomic: any invalid edit rejects the whole batch.",
+      "Edit a file using hash anchors from read output. Replaces the inclusive range from start to end with lines[]. If end is omitted, replaces one line. Hash mismatch means the file changed; re-read and retry. This tool is atomic: any invalid edit rejects the whole batch.",
     promptSnippet: "Safely edit files using read's <line>:<hash> anchors",
     promptGuidelines: [
       "Prefer quick_edit after read when exact current anchors are available.",
       "Use start/end anchors copied from read output. Both line and hash are required.",
-      "Set content to an empty string to delete a line or range.",
+      "Use lines for replacement text. Each array entry is one output line; use lines: [] to delete a line or range.",
       "Use diff: true when you need a compact before/after diff.",
     ],
     parameters: QuickEditParams,
@@ -331,7 +331,7 @@ export default function (pi: ExtensionAPI) {
           startHash: start.hash,
           endLine: end.line,
           endHash: end.hash,
-          content: edit.content,
+          lines: edit.lines,
         };
       });
 
