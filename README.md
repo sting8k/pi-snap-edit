@@ -44,6 +44,8 @@ pi -e ./src/index.ts
 
 Read first, then use anchors with `quick_edit`:
 
+Copy only the anchor prefix before `|`, e.g. `42:a3f`; do not include `|content` in `start`, `end`, `scope`, or `anchor` fields.
+
 ```json
 {
   "path": "src/foo.ts",

@@ -39,12 +39,12 @@ export default function (pi: ExtensionAPI) {
     name: "quick_edit",
     label: "quick-edit",
     description:
-      "Edit a file using hash anchors from read output. Replaces the inclusive range from start to end with lines[]. If end is omitted, replaces one line. Hash mismatch means the file changed; re-read and retry. This tool is atomic: any invalid edit rejects the whole batch.",
-    promptSnippet: "Safely edit files using read's <line>:<hash> anchors",
+      "Edit a file using read anchors. Anchor fields must be only the <line>:<hash> prefix before '|'; never include '|content'. Replaces the inclusive range from start to end with lines[]. Atomic: any invalid edit rejects the whole batch.",
+    promptSnippet: "Safely edit files using read's <line>:<hash> anchor prefix",
     promptGuidelines: [
-      "Prefer quick_edit after read when exact current anchors are available.",
-      "Use start/end anchors copied from read output. Both line and hash are required.",
-      "Use lines for replacement text. Each array entry is one output line; use lines: [] to delete a line or range.",
+      "Use quick_edit after read when exact current anchors are available.",
+      "Copy only the <line>:<hash> prefix before '|', e.g. '11:f80'. Never include '|content'.",
+      "Use start/end anchors only; put replacement text only in lines[]. Use lines: [] to delete.",
     ],
     parameters: QuickEditParams,
 
@@ -90,14 +90,14 @@ export default function (pi: ExtensionAPI) {
     name: "structured_edit",
     label: "structured-edit",
     description:
-      "Edit a file with structured operations. Use substitute for counted single-line substring replacements inside an optional anchored scope, and use anchored line operations for insert/delete/replace. This tool is atomic: any invalid anchor, count mismatch, or stale hash rejects the whole batch.",
-    promptSnippet: "Apply scoped counted substitutions and anchored line operations atomically",
+      "Edit a file with structured operations. Anchor fields must be only the <line>:<hash> prefix before '|'; never include '|content'. Uses counted substitutions and anchored line operations atomically.",
+    promptSnippet: "Apply substitutions and line ops using only <line>:<hash> anchors",
     promptGuidelines: [
-      "Use structured_edit for complex edits inside a long block when several small substitutions/inserts/deletes avoid rewriting the whole block.",
-      "Use scope with start/end anchors to limit substitute operations to one block from read output.",
+      "Use structured_edit when several small substitutions/inserts/deletes avoid rewriting a long block.",
+      "For every scope/start/end/anchor field, copy only the <line>:<hash> prefix before '|', e.g. '11:f80'.",
       "Use substitute for single-line substring replacements with count as an assertion. Use line operations for multi-line changes.",
       "Use insert_after on the last anchored line to append content at EOF.",
-      "Use quick_edit instead when you only need one simple anchored range replacement.",
+      "Use quick_edit instead for one simple anchored range replacement.",
     ],
     parameters: StructuredEditParams,
 
