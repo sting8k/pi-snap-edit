@@ -1,15 +1,15 @@
-## pi-snap-edit v0.2.0
+## pi-snap-edit v1.0.0
 
-Switches read anchors from line-numbered 3-hex hashes to compact 5-character hash-only anchors, reducing stale-anchor retries after line shifts in long files.
+Line-numbered editing release. `read` now shows a file-level `fileHash` and readable line numbers, while edit tools reject stale hashes without exposing a retry oracle.
 
 ### Changes
 
-- Changed read output anchors to `<hash>|<content>` with 5-character base32 hashes derived from SHA-256 line content.
-- `quick_edit` and `structured_edit` now accept hash-only anchors.
-- Anchor resolution searches the current file and applies only when the hash matches exactly one current line.
-- Duplicate/colliding hashes are shown as `-----|content` in refreshed read/context output so agents do not copy invalid direct anchors.
-- Duplicate matching hashes are rejected as ambiguous instead of guessing an occurrence.
-- Updated renderer, schemas, prompt guidance, README, and tests for hash-only anchors.
+- Replaced hash-line anchors with padded `read` line numbers and a required file-level `fileHash`.
+- Added `expectedStartLine` to `quick_edit` as an optional exact guard for the current `start` line only.
+- Added `substitute_edit` for counted literal substitutions inside a required line range.
+- Preserved absolute line numbers for offset reads and padded line-number columns around 10/100+ lines.
+- Fixed final-newline edge cases so `read` does not show phantom EOF lines or continuation notices.
+- Updated README and tests for the line-numbered workflow.
 
 ### Install
 
@@ -21,3 +21,4 @@ pi install npm:pi-snap-edit
 
 - `npm run typecheck` passed.
 - `npm test` passed.
+- `npm pack --dry-run` passed.
