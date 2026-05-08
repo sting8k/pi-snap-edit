@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
-import { getFileStatSnapshot } from "./file-stat.js";
+import { getFileStatSnapshot, hashFileContent } from "./file-stat.js";
 import type { Substitution } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
@@ -42,8 +42,6 @@ export async function applySubstituteEdits(
         "stale fileHash; no edits were applied.",
         `expected: ${fileHash}`,
         `current: ${snapshot.fileHash}`,
-        `current size: ${snapshot.size}`,
-        `current mtimeMs: ${snapshot.mtimeMs}`,
       ].join("\n"),
     );
   }
@@ -96,5 +94,6 @@ export async function applySubstituteEdits(
   if (diff) parts.push(diff);
   const contexts = formatContexts(updated, contextRanges);
   if (contexts) parts.push(contexts);
-  return parts.join("\n\n") || "Substitutions applied.";
+  parts.push(`fileHash: ${hashFileContent(newContent)}`);
+  return parts.join("\n\n");
 }

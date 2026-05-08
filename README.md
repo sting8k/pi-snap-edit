@@ -16,13 +16,13 @@ Pain points from agent workflow:
 
 ## Behavior
 
-- Adds `file_stat` to return `size`, `mtimeMs`, and a short content `fileHash`.
+- Hooks `read` output to include a short content `fileHash`.
 - Adds `quick_edit` for atomic line/range replacements using 1-indexed line numbers.
 - Adds `substitute_edit` for ordered counted literal substitutions inside a required line range.
-- Edit tools require `fileHash`; if the file changed since `file_stat`, no edits are applied.
+- Edit tools require `fileHash`; if the file changed since `read`, no edits are applied.
 - Preserves line endings, including CRLF and no-trailing-newline files.
 - Rejects invalid ranges, count mismatches, and overlapping line edits without partial writes.
-- Does not hook or rewrite Pi `read` output in normal runtime.
+- Does not rewrite Pi `read` lines into custom anchors; the read hook only prepends `fileHash`.
 
 ## Install
 
@@ -38,7 +38,7 @@ pi -e ./src/index.ts
 
 ## Usage
 
-First get a stat snapshot:
+First read the file or relevant range; read output includes `fileHash`:
 
 ```json
 {
@@ -51,7 +51,7 @@ Then edit by line number with `quick_edit`:
 ```json
 {
   "path": "src/foo.ts",
-  "fileHash": "abc123def4",
+  "fileHash": "abc123",
   "edits": [
     {
       "start": 42,
@@ -69,7 +69,7 @@ For literal substitutions inside a known range, use `substitute_edit`:
 ```json
 {
   "path": "src/foo.ts",
-  "fileHash": "abc123def4",
+  "fileHash": "abc123",
   "start": 40,
   "end": 120,
   "substitutions": [
@@ -80,7 +80,7 @@ For literal substitutions inside a known range, use `substitute_edit`:
 
 Substitutions are literal, single-line, ordered, and counted. Use `quick_edit` for multi-line changes.
 
-Line numbers can come from Pi `read`, `rg -n`, `grep -n`, src maps, or any CLI output. EOF insert uses the virtual line immediately after the last line. If an edit reports a stale `fileHash`, inspect the current file, call `file_stat` again, and retry with updated line numbers/hash.
+Line numbers can come from Pi `read`, `rg -n`, `grep -n`, src maps, or any CLI output. EOF insert uses the virtual line immediately after the last line. If an edit reports a stale `fileHash`, read the current file/range again and retry with updated line numbers/hash.
 
 ## Verification
 

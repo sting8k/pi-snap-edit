@@ -6,7 +6,7 @@ export const FileStatParams = Type.Object({
 
 export const QuickEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
-  fileHash: Type.String({ description: "Required content file hash from file_stat. Prevents stale line-number edits." }),
+  fileHash: Type.String({ description: "Required content file hash from read output. Prevents stale line-number edits." }),
   edits: Type.Array(
     Type.Object({
       start: Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF." }),
@@ -19,7 +19,7 @@ export const QuickEditParams = Type.Object({
 
 export const SubstituteEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
-  fileHash: Type.String({ description: "Required content file hash from file_stat. Prevents stale line-number substitutions." }),
+  fileHash: Type.String({ description: "Required content file hash from read output. Prevents stale line-number substitutions." }),
   start: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line. Required; substitute_edit never runs whole-file implicitly." }),
   end: Type.Integer({ minimum: 1, description: "1-indexed inclusive end line. Must be within the current file." }),
   substitutions: Type.Array(

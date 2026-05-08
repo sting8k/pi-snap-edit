@@ -17,6 +17,7 @@ import snapEditExtension, {
   summarizeQuickEditOutput,
   preferQuickEditTools,
   getFileStatSnapshot,
+  hashFileContent,
   type Edit,
 } from "../src/index.js";
 
@@ -88,36 +89,22 @@ describe("hash helpers", () => {
 });
 
 describe("read result hashing hook", () => {
-  it("adds anchors to plain core read text", () => {
-    assert.equal(hashReadText("alpha\nbeta", undefined), "R3J7N|alpha\n6RHGJ|beta");
-  });
-
-  it("starts anchors at read offset", () => {
-    assert.equal(hashReadText("alpha\nbeta", 10), "R3J7N|alpha\n6RHGJ|beta");
+  it("adds a fileHash header to plain core read text", () => {
+    assert.equal(hashReadText("alpha\nbeta", "abc123"), "fileHash: abc123\n\nalpha\nbeta");
   });
 
   it("preserves core read continuation notices", () => {
     const text = "alpha\nbeta\n\n[Showing lines 5-6 of 20. Use offset=7 to continue.]";
-    assert.equal(hashReadText(text, 5), "R3J7N|alpha\n6RHGJ|beta\n\n[Showing lines 5-6 of 20. Use offset=7 to continue.]");
+    assert.equal(hashReadText(text, "abc123"), "fileHash: abc123\n\nalpha\nbeta\n\n[Showing lines 5-6 of 20. Use offset=7 to continue.]");
   });
 
-  it("preserves byte-limit continuation notices", () => {
-    const text = "alpha\n\n[Showing lines 1-1 of 20 (50KB limit). Use offset=2 to continue.]";
-    assert.equal(hashReadText(text, 1), "R3J7N|alpha\n\n[Showing lines 1-1 of 20 (50KB limit). Use offset=2 to continue.]");
+  it("does not alter image read notes", () => {
+    assert.equal(hashReadText("Read image file [image/png]", "abc123"), "Read image file [image/png]");
   });
 
-  it("preserves user-limit continuation notices", () => {
-    const text = "alpha\n\n[3 more lines in file. Use offset=2 to continue.]";
-    assert.equal(hashReadText(text, undefined), "R3J7N|alpha\n\n[3 more lines in file. Use offset=2 to continue.]");
-  });
-
-  it("does not alter image or oversized-line read notes", () => {
-    assert.equal(hashReadText("Read image file [image/png]", undefined), "Read image file [image/png]");
-    assert.equal(hashReadText("[Line 7 is 80KB, exceeds 50KB limit. Use bash: sed -n '7p' file | head -c 51200]", undefined), "[Line 7 is 80KB, exceeds 50KB limit. Use bash: sed -n '7p' file | head -c 51200]");
-  });
-
-  it("normalizes CRLF emitted by core read text before hashing", () => {
-    assert.equal(hashReadText("alpha\r\nbeta", undefined), "R3J7N|alpha\n6RHGJ|beta");
+  it("uses 6-character content hashes", () => {
+    assert.equal(hashFileContent("alpha").length, 6);
+    assert.equal(hashFileContent("alpha"), "8ed3f6");
   });
 });
 
@@ -131,8 +118,8 @@ describe("quick-edit renderer helpers", () => {
     assert.deepEqual(summarizeQuickEditOutput("R3J7N|alpha"), { additions: 0, removals: 0, hasDiff: false });
   });
   it("prefers quick_edit by removing built-in edit from active tools", () => {
-    assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "file_stat", "quick_edit", "substitute_edit"]);
-    assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "edit"]), ["read", "quick_edit", "file_stat", "substitute_edit"]);
+    assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit", "substitute_edit"]);
+    assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "edit"]), ["read", "quick_edit", "substitute_edit"]);
   });
 });
 

@@ -3,15 +3,16 @@ import { keyHint, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import path from "node:path";
 import { preferQuickEditTools } from "./active-tools.js";
-import { formatFileStatSnapshot, getFileStatSnapshot } from "./file-stat.js";
+import { getFileStatSnapshot, hashFileContent } from "./file-stat.js";
 import { applyQuickEdits } from "./quick-edit.js";
+import { hashReadText } from "./read-hook.js";
 import { color, renderQuickEditOutput, summarizeQuickEditOutput } from "./render.js";
-import { FileStatParams, QuickEditParams, StructuredEditParams, SubstituteEditParams } from "./schemas.js";
+import { QuickEditParams, StructuredEditParams, SubstituteEditParams } from "./schemas.js";
 import { applyStructuredEdits } from "./structured-edit.js";
 import { applySubstituteEdits } from "./substitute-edit.js";
 export { formatHash, hashLines, invalidAnchorMessage, lineHash, parseAnchor } from "./anchors.js";
 export { preferQuickEditTools } from "./active-tools.js";
-export { formatFileStatSnapshot, getFileStatSnapshot, hashFileContent } from "./file-stat.js";
+export { getFileStatSnapshot, hashFileContent } from "./file-stat.js";
 export { applyQuickEdits } from "./quick-edit.js";
 export { hashReadText } from "./read-hook.js";
 export type { Edit, StructuredEditOp, Substitution } from "./schemas.js";
@@ -106,38 +107,35 @@ function prepareStructuredEditArguments(input: unknown): any {
 }
 
 export default function (pi: ExtensionAPI) {
+  pi.on("tool_result", async (event) => {
+    if (event.toolName !== "read" || event.isError) return;
+    if (event.content.some((part) => part.type === "image")) return;
+    if (!isRecord(event.input) || typeof event.input.path !== "string") return;
 
-  pi.registerTool({
-    name: "file_stat",
-    label: "file-stat",
-    description: "Return size, mtimeMs, and content fileHash for safe line-number quick_edit calls.",
-    promptSnippet: "Get fileHash before quick_edit line-number edits",
-    promptGuidelines: [
-      "Call file_stat before quick_edit when editing by line number.",
-      "Pass the returned fileHash unchanged to quick_edit.",
-      "If quick_edit reports a stale fileHash, call file_stat again after inspecting the current file.",
-    ],
-    parameters: FileStatParams,
-
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const absolutePath = resolvePath(ctx.cwd, params.path);
-      const text = formatFileStatSnapshot(await getFileStatSnapshot(absolutePath));
-      return { content: [{ type: "text" as const, text }], details: undefined };
-    },
+    const absolutePath = resolvePath(process.cwd(), event.input.path);
+    const { fileHash } = await getFileStatSnapshot(absolutePath);
+    return {
+      content: event.content.map((part) =>
+        part.type === "text" ? { ...part, text: hashReadText(part.text, fileHash) } : part,
+      ),
+    };
   });
+
+
 
   pi.registerTool({
     name: "quick_edit",
     label: "quick-edit",
     description:
-      "Edit a file by 1-indexed line number or inclusive line range. Requires fileHash from file_stat to prevent stale line-number edits. Atomic: any invalid edit rejects the whole batch.",
-    promptSnippet: "Safely edit files by line number using file_stat fileHash",
+      "Edit a file by 1-indexed line number or inclusive line range. Requires fileHash from the latest read output to prevent stale line-number edits. Atomic: any invalid edit rejects the whole batch.",
+    promptSnippet: "Safely edit files by line number using read fileHash",
     promptGuidelines: [
-      "Call file_stat first and pass its fileHash to quick_edit; line-number edits without the latest fileHash are rejected.",
-      "Use start/end as 1-indexed line numbers from read, rg -n, grep -n, or srcwalk output.",
-      "Omit end for a single-line replacement. Use lines: [] to delete a line or range. Use lines: [\"\"] for one blank line.",
+      "Use fileHash from the latest read output for this file; do not guess line numbers from memory.",
+      "Use start/end as 1-indexed line numbers from read, rg -n, grep -n, or srcwalk output, but keep fileHash from read.",
+      `Omit end for a single-line replacement. Use lines: [] to delete a line or range. Use lines: [""] for one blank line.`,
+      "Use start=lineCount+1 with no end to insert at EOF; for an empty file, start=1 inserts the first line.",
       "Batch multiple independent ranges in one call; overlapping ranges are rejected atomically.",
-      "If quick_edit reports a stale fileHash, inspect the current file and get a fresh file_stat before retrying.",
+      "If quick_edit reports a stale fileHash, read the current file/range again before retrying.",
     ],
     parameters: QuickEditParams,
 
@@ -169,10 +167,10 @@ export default function (pi: ExtensionAPI) {
     name: "substitute_edit",
     label: "substitute-edit",
     description:
-      "Apply ordered literal substitutions inside a required 1-indexed line range. Requires fileHash from file_stat. Atomic: any count mismatch rejects the whole batch.",
-    promptSnippet: "Safely substitute literal text inside a line range using file_stat fileHash",
+      "Apply ordered literal substitutions inside a required 1-indexed line range. Requires fileHash from the latest read output. Atomic: any count mismatch rejects the whole batch.",
+    promptSnippet: "Safely substitute literal text inside a line range using read fileHash",
     promptGuidelines: [
-      "Call file_stat first and pass its fileHash to substitute_edit; stale fileHash rejects the edit.",
+      "Use fileHash from the latest read output for this file; stale fileHash rejects the edit.",
       "Always provide a narrow start/end line range. substitute_edit never runs over the whole file implicitly.",
       "Use substitutions[] for ordered single-line literal replacements. No regex; use quick_edit for multi-line changes.",
       "Each substitution count is required and checked before that substitution is applied.",
