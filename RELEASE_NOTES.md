@@ -1,3 +1,26 @@
+## pi-snap-edit v1.1.1
+
+Hotfix release. Restored numbered read output that was accidentally removed in v1.1.0.
+
+### Changes
+
+- Restored numbered read output (line numbers with padding).
+- Read output still does not include `fileHash` header (as intended in v1.1.0).
+- Fixed read hook to properly handle offset reads and image files.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (47 tests).
+
+---
+
 ## pi-snap-edit v1.1.0
 
 Simplified output release. Removed `fileHash` from read hook and edit responses, removed hash prefix from diff output, and fixed security leak in error messages.
