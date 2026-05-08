@@ -41,7 +41,7 @@ export async function applySubstituteEdits(
       [
         "stale fileHash; no edits were applied.",
         `expected: ${fileHash}`,
-        `current: ${snapshot.fileHash}`,
+        "Read the file again to get the current fileHash before retrying.",
       ].join("\n"),
     );
   }

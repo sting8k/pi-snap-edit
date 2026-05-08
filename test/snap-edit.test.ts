@@ -206,7 +206,7 @@ describe("quick edits", () => {
 
     await assert.rejects(
       () => applyQuickEdits(file, staleHash, [{ start: 2, lines: ["TWO"] }]),
-      /stale fileHash; no edits were applied[\s\S]*expected:[\s\S]*current:/,
+      /stale fileHash; no edits were applied[\s\S]*expected:[\s\S]*Read the file again/,
     );
     assert.equal(await readFile(file, "utf8"), "one\nchanged\nthree\n");
   });

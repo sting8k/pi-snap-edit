@@ -39,7 +39,7 @@ export async function applyQuickEdits(absolutePath: string, fileHash: string, ed
       [
         "stale fileHash; no edits were applied.",
         `expected: ${fileHash}`,
-        `current: ${snapshot.fileHash}`,
+        "Read the file again to get the current fileHash before retrying.",
       ].join("\n"),
     );
   }
