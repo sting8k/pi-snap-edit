@@ -1,15 +1,34 @@
 import { Type } from "@sinclair/typebox";
 
+export const FileStatParams = Type.Object({
+  path: Type.String({ description: "Path to stat before line-based quick_edit." }),
+});
+
 export const QuickEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
+  fileHash: Type.String({ description: "Required content file hash from file_stat. Prevents stale line-number edits." }),
   edits: Type.Array(
     Type.Object({
-      start: Type.String({ description: "Start anchor only, e.g. ABCDE. Exclude '|content'." }),
-      end: Type.Optional(Type.String({ description: "Optional end anchor only, e.g. VWXYZ. Exclude '|content'." })),
-      occurrence: Type.Optional(Type.Integer({ minimum: 1, description: "Select occurrence N when anchor is ambiguous (1-indexed)." })),
-      lines: Type.Array(Type.String(), { description: "Replacement lines for the anchored line/range. Empty array deletes it." }),
+      start: Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF." }),
+      end: Type.Optional(Type.Integer({ minimum: 1, description: "Optional 1-indexed inclusive end line number." })),
+      lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it." }),
     }),
-    { minItems: 1, description: "Hash-anchored edits to apply atomically." },
+    { minItems: 1, description: "Line-number edits to apply atomically. Use start=lineCount+1 with no end to insert at EOF. fileHash is required." },
+  ),
+});
+
+export const SubstituteEditParams = Type.Object({
+  path: Type.String({ description: "Path to the file to edit." }),
+  fileHash: Type.String({ description: "Required content file hash from file_stat. Prevents stale line-number substitutions." }),
+  start: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line. Required; substitute_edit never runs whole-file implicitly." }),
+  end: Type.Integer({ minimum: 1, description: "1-indexed inclusive end line. Must be within the current file." }),
+  substitutions: Type.Array(
+    Type.Object({
+      old: Type.String({ description: "Exact literal substring to replace. Must be single-line and non-empty." }),
+      new: Type.String({ description: "Literal replacement substring. Must be single-line." }),
+      count: Type.Integer({ minimum: 1, description: "Required number of replacements for this substitution." }),
+    }),
+    { minItems: 1, description: "Ordered literal substitutions. Applied sequentially; count is checked before each substitution." },
   ),
 });
 
@@ -66,9 +85,14 @@ export type StructuredEditOp =
   | { type: "insert_before"; anchor: string; occurrence?: number; lines: string[] }
   | { type: "insert_after"; anchor: string; occurrence?: number; lines: string[] };
 
+export type Substitution = {
+  old: string;
+  new: string;
+  count: number;
+};
+
 export type Edit = {
-  start: string;
-  end?: string;
-  occurrence?: number;
+  start: number;
+  end?: number;
   lines: string[];
 };

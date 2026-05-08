@@ -1,37 +1,33 @@
 # pi-snap-edit
 
-Fast, precise, script-free edits for Pi agents. Experimental.
+Fast, precise, script-free line edits for Pi agents. Experimental redesign branch.
 
 ## Why
-Pain points from my own agent workflow:
+
+Pain points from agent workflow:
 
 - Pi's built-in edit tools are safe and precise, but exact replacements can use a lot of tokens.
 - Small mismatches can cause retries, especially in large or messy edits.
 - Escaped strings, quotes, backslashes, regex, and templates can turn exact replacements into escape hell.
 - For complex changes, agents often use ad-hoc Python scripts, which are harder to review.
+- Most search tools (`rg -n`, `grep -n`, src maps) naturally return line numbers, not custom anchors.
 
-`pi-snap-edit` is experimental. It aims to make edits fast, anchored, atomic, and script-free.
+`pi-snap-edit` is experimenting with a simpler model: edit by line number or counted literal substitutions, but require a content file hash so stale edits are rejected.
 
 ## Behavior
 
-- Hooks Pi's core `read` result and adds 5-character `<hash>|<content>` anchors to text output.
-- Adds `quick_edit` (`quick-edit`) for direct anchored line/range replacements.
-- Adds `structured_edit` (`structured-edit`) for scoped counted substitutions and anchored insert/delete/replace operations.
-- Does not override Pi's built-in `edit` tool, but removes `edit` from active tools so agents use `quick_edit` or `structured_edit`.
-- No config, slash commands, widgets, MCP, or external editor dependency.
+- Adds `file_stat` to return `size`, `mtimeMs`, and a short content `fileHash`.
+- Adds `quick_edit` for atomic line/range replacements using 1-indexed line numbers.
+- Adds `substitute_edit` for ordered counted literal substitutions inside a required line range.
+- Edit tools require `fileHash`; if the file changed since `file_stat`, no edits are applied.
+- Preserves line endings, including CRLF and no-trailing-newline files.
+- Rejects invalid ranges, count mismatches, and overlapping line edits without partial writes.
+- Does not hook or rewrite Pi `read` output in normal runtime.
 
 ## Install
 
-Install from npm:
-
 ```bash
 pi install npm:pi-snap-edit
-```
-
-Or install from GitHub:
-
-```bash
-pi install git:github.com/sting8k/pi-snap-edit
 ```
 
 Or load locally from this checkout:
@@ -42,54 +38,54 @@ pi -e ./src/index.ts
 
 ## Usage
 
-Read first, then use anchors with `quick_edit`:
+First get a stat snapshot:
 
-Copy only the 5-character hash before `|`, e.g. `ABCDE`; do not include `|content` in `start`, `end`, `scope`, or `anchor` fields.
+```json
+{
+  "path": "src/foo.ts"
+}
+```
 
-Lines shown as `-----|content` are duplicates/collisions and intentionally have no valid direct anchor. To edit them, anchor a surrounding range with nearby unique hashes and preserve unchanged context lines.
+Then edit by line number with `quick_edit`:
 
 ```json
 {
   "path": "src/foo.ts",
+  "fileHash": "abc123def4",
   "edits": [
     {
-      "start": "ABCDE",
-      "end": "VWXYZ",
+      "start": 42,
+      "end": 45,
       "lines": ["replacement line 1", "replacement line 2"]
     }
   ]
 }
 ```
 
-Omit `end` for a single-line replacement. Use `lines: []` to delete a line or range. Use `lines: [""]` to replace with one blank line.
+Omit `end` for a single-line replacement. Use `lines: []` to delete a line or range. Use `lines: [""]` to replace with one blank line. Use `start: lineCount + 1` with no `end` to insert at EOF; for an empty file, `start: 1` inserts the first line.
 
-Use `structured_edit` when several small operations inside a long block are cleaner than rewriting the whole block:
+For literal substitutions inside a known range, use `substitute_edit`:
 
 ```json
 {
   "path": "src/foo.ts",
-  "scope": { "start": "ABCDE", "end": "VWXYZ" },
-  "ops": [
-    {
-      "type": "substitute",
-      "old": "logger.debug",
-      "new": "logger.trace",
-      "count": 4
-    },
-    {
-      "type": "insert_after",
-      "anchor": "LMNO7",
-      "lines": ["  client.setTimeout(timeout);"]
-    },
-    {
-      "type": "delete_lines",
-      "start": "QRST7",
-      "end": "UVWX2"
-    }
+  "fileHash": "abc123def4",
+  "start": 40,
+  "end": 120,
+  "substitutions": [
+    { "old": "logger.debug", "new": "logger.trace", "count": 4 }
   ]
 }
 ```
 
-`substitute` is single-line and uses `count` as an assertion. Use `replace_lines`, `delete_lines`, `insert_before`, or `insert_after` for line-oriented changes.
+Substitutions are literal, single-line, ordered, and counted. Use `quick_edit` for multi-line changes.
 
-For EOF append, use `structured_edit` with `insert_after` on the last anchored line. `quick_edit` intentionally edits existing anchored lines/ranges only. If a hash matches multiple current lines, the edit is rejected as ambiguous; narrow the scope or read the target area again.
+Line numbers can come from Pi `read`, `rg -n`, `grep -n`, src maps, or any CLI output. EOF insert uses the virtual line immediately after the last line. If an edit reports a stale `fileHash`, inspect the current file, call `file_stat` again, and retry with updated line numbers/hash.
+
+## Verification
+
+```bash
+npm run typecheck
+npm test
+npm pack --dry-run
+```

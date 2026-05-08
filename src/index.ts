@@ -3,20 +3,22 @@ import { keyHint, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import path from "node:path";
 import { preferQuickEditTools } from "./active-tools.js";
+import { formatFileStatSnapshot, getFileStatSnapshot } from "./file-stat.js";
 import { applyQuickEdits } from "./quick-edit.js";
-import { hashReadText } from "./read-hook.js";
 import { color, renderQuickEditOutput, summarizeQuickEditOutput } from "./render.js";
-import { QuickEditParams, StructuredEditParams } from "./schemas.js";
+import { FileStatParams, QuickEditParams, StructuredEditParams, SubstituteEditParams } from "./schemas.js";
 import { applyStructuredEdits } from "./structured-edit.js";
-
+import { applySubstituteEdits } from "./substitute-edit.js";
 export { formatHash, hashLines, invalidAnchorMessage, lineHash, parseAnchor } from "./anchors.js";
 export { preferQuickEditTools } from "./active-tools.js";
+export { formatFileStatSnapshot, getFileStatSnapshot, hashFileContent } from "./file-stat.js";
 export { applyQuickEdits } from "./quick-edit.js";
 export { hashReadText } from "./read-hook.js";
+export type { Edit, StructuredEditOp, Substitution } from "./schemas.js";
 export { summarizeQuickEditOutput } from "./render.js";
-export type { Edit, StructuredEditOp } from "./schemas.js";
 export { splitLines } from "./text.js";
 export { applyStructuredEdits } from "./structured-edit.js";
+export { applySubstituteEdits } from "./substitute-edit.js";
 
 const GUIDANCE_ERROR = "__piSnapEditGuidanceError";
 const STRUCTURED_OP_TYPES = ["substitute", "replace_lines", "delete_lines", "insert_before", "insert_after"] as const;
@@ -104,35 +106,44 @@ function prepareStructuredEditArguments(input: unknown): any {
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.on("tool_result", (event) => {
-    if (event.toolName !== "read" || event.isError) return;
-    if (event.content.some((part) => part.type === "image")) return;
 
-    return {
-      content: event.content.map((part) =>
-        part.type === "text" ? { ...part, text: hashReadText(part.text, event.input.offset) } : part,
-      ),
-    };
+  pi.registerTool({
+    name: "file_stat",
+    label: "file-stat",
+    description: "Return size, mtimeMs, and content fileHash for safe line-number quick_edit calls.",
+    promptSnippet: "Get fileHash before quick_edit line-number edits",
+    promptGuidelines: [
+      "Call file_stat before quick_edit when editing by line number.",
+      "Pass the returned fileHash unchanged to quick_edit.",
+      "If quick_edit reports a stale fileHash, call file_stat again after inspecting the current file.",
+    ],
+    parameters: FileStatParams,
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const absolutePath = resolvePath(ctx.cwd, params.path);
+      const text = formatFileStatSnapshot(await getFileStatSnapshot(absolutePath));
+      return { content: [{ type: "text" as const, text }], details: undefined };
+    },
   });
 
   pi.registerTool({
     name: "quick_edit",
     label: "quick-edit",
     description:
-      "Edit a file using read anchors. Anchor fields must be only the <hash> prefix before '|'; never include '|content'. Replaces the inclusive range from start to end with lines[]. Atomic: any invalid edit rejects the whole batch.",
-    promptSnippet: "Safely edit files using read's <hash> anchor prefix",
+      "Edit a file by 1-indexed line number or inclusive line range. Requires fileHash from file_stat to prevent stale line-number edits. Atomic: any invalid edit rejects the whole batch.",
+    promptSnippet: "Safely edit files by line number using file_stat fileHash",
     promptGuidelines: [
-      "Use quick_edit for one simple anchored range replacement, or batch multiple independent ranges from the same latest read in one call.",
-      "Copy only the <hash> prefix before '|', e.g. 'ABCDE'. Never include '|content'.",
-      "Use start/end anchors only; put replacement text only in lines[]. Use lines: [] to delete.",
-      "After any successful edit/write, use anchors from the latest tool output for nearby follow-up edits; otherwise read again before another quick_edit.",
-      "For several small edits in one file, prefer one structured_edit call over multiple quick_edit calls.",
+      "Call file_stat first and pass its fileHash to quick_edit; line-number edits without the latest fileHash are rejected.",
+      "Use start/end as 1-indexed line numbers from read, rg -n, grep -n, or srcwalk output.",
+      "Omit end for a single-line replacement. Use lines: [] to delete a line or range. Use lines: [\"\"] for one blank line.",
+      "Batch multiple independent ranges in one call; overlapping ranges are rejected atomically.",
+      "If quick_edit reports a stale fileHash, inspect the current file and get a fresh file_stat before retrying.",
     ],
     parameters: QuickEditParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const absolutePath = resolvePath(ctx.cwd, params.path);
-        const text = await withFileMutationQueue(absolutePath, () => applyQuickEdits(absolutePath, params.edits));
+      const text = await withFileMutationQueue(absolutePath, () => applyQuickEdits(absolutePath, params.fileHash, params.edits));
       return { content: [{ type: "text" as const, text }], details: undefined };
     },
 
@@ -148,6 +159,47 @@ export default function (pi: ExtensionAPI) {
         : "";
       const hint = !expanded && text ? ` ${color(theme, "muted", `(${keyHint("app.tools.expand", "to expand")})`)}` : "";
       const header = `${color(theme, "dim", "↳")} ${color(theme, "success", "quick-edit applied")}${stats}${hint}`;
+
+      if (!expanded || !text) return new Text(header, 0, 0);
+      return new Text(`${header}\n${renderQuickEditOutput(theme, text)}`, 0, 0);
+    },
+  });
+
+  pi.registerTool({
+    name: "substitute_edit",
+    label: "substitute-edit",
+    description:
+      "Apply ordered literal substitutions inside a required 1-indexed line range. Requires fileHash from file_stat. Atomic: any count mismatch rejects the whole batch.",
+    promptSnippet: "Safely substitute literal text inside a line range using file_stat fileHash",
+    promptGuidelines: [
+      "Call file_stat first and pass its fileHash to substitute_edit; stale fileHash rejects the edit.",
+      "Always provide a narrow start/end line range. substitute_edit never runs over the whole file implicitly.",
+      "Use substitutions[] for ordered single-line literal replacements. No regex; use quick_edit for multi-line changes.",
+      "Each substitution count is required and checked before that substitution is applied.",
+      "Array order matters: later substitutions see earlier in-memory substitutions, but nothing is written unless all counts match.",
+    ],
+    parameters: SubstituteEditParams,
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const absolutePath = resolvePath(ctx.cwd, params.path);
+      const text = await withFileMutationQueue(absolutePath, () =>
+        applySubstituteEdits(absolutePath, params.fileHash, params.start, params.end, params.substitutions),
+      );
+      return { content: [{ type: "text" as const, text }], details: undefined };
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) return new Text(`${color(theme, "dim", "↳")} ${color(theme, "muted", "applying substitute-edit...")}`, 0, 0);
+
+      const text = result.content?.filter((c) => c.type === "text").map((c) => c.text).join("\n") ?? "";
+      if ((result as any).isError) return new Text(color(theme, "error", text.trim() || "substitute-edit failed"), 0, 0);
+
+      const summary = summarizeQuickEditOutput(text);
+      const stats = summary.hasDiff
+        ? ` ${color(theme, "success", `+${summary.additions}`)} ${color(theme, "error", `-${summary.removals}`)}`
+        : "";
+      const hint = !expanded && text ? ` ${color(theme, "muted", `(${keyHint("app.tools.expand", "to expand")})`)}` : "";
+      const header = `${color(theme, "dim", "↳")} ${color(theme, "success", "substitute-edit applied")}${stats}${hint}`;
 
       if (!expanded || !text) return new Text(header, 0, 0);
       return new Text(`${header}\n${renderQuickEditOutput(theme, text)}`, 0, 0);
