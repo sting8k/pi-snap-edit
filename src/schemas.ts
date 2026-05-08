@@ -4,8 +4,8 @@ export const QuickEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
   edits: Type.Array(
     Type.Object({
-      start: Type.String({ description: "Start anchor only, e.g. 11:f80. Exclude '|content'." }),
-      end: Type.Optional(Type.String({ description: "Optional end anchor only, e.g. 46:e1d. Exclude '|content'." })),
+      start: Type.String({ description: "Start anchor only, e.g. ABCDE. Exclude '|content'." }),
+      end: Type.Optional(Type.String({ description: "Optional end anchor only, e.g. VWXYZ. Exclude '|content'." })),
       lines: Type.Array(Type.String(), { description: "Replacement lines for the anchored line/range. Empty array deletes it." }),
     }),
     { minItems: 1, description: "Hash-anchored edits to apply atomically." },
@@ -15,8 +15,8 @@ export const QuickEditParams = Type.Object({
 export const StructuredEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
   scope: Type.Optional(Type.Object({
-    start: Type.String({ description: "Scope start anchor only, e.g. 120:abc. Exclude '|content'." }),
-    end: Type.String({ description: "Scope end anchor only, e.g. 260:def. Exclude '|content'." }),
+    start: Type.String({ description: "Scope start anchor only, e.g. ABCDE. Exclude '|content'." }),
+    end: Type.String({ description: "Scope end anchor only, e.g. VWXYZ. Exclude '|content'." }),
   })),
   ops: Type.Array(
     Type.Union([
@@ -28,23 +28,23 @@ export const StructuredEditParams = Type.Object({
       }),
       Type.Object({
         type: Type.Literal("replace_lines"),
-        start: Type.String({ description: "Start anchor only, e.g. 210:aaa. Exclude '|content'." }),
+        start: Type.String({ description: "Start anchor only, e.g. ABCDE. Exclude '|content'." }),
         end: Type.Optional(Type.String({ description: "Optional end anchor only. Exclude '|content'." })),
         lines: Type.Array(Type.String(), { description: "Replacement lines. Empty array deletes the range." }),
       }),
       Type.Object({
         type: Type.Literal("delete_lines"),
-        start: Type.String({ description: "Start anchor only, e.g. 210:aaa. Exclude '|content'." }),
+        start: Type.String({ description: "Start anchor only, e.g. ABCDE. Exclude '|content'." }),
         end: Type.Optional(Type.String({ description: "Optional end anchor only. Exclude '|content'." })),
       }),
       Type.Object({
         type: Type.Literal("insert_before"),
-        anchor: Type.String({ description: "Anchor only, e.g. 180:a3f. Exclude '|content'." }),
+        anchor: Type.String({ description: "Anchor only, e.g. ABCDE. Exclude '|content'." }),
         lines: Type.Array(Type.String(), { minItems: 1, description: "Lines to insert before the anchor." }),
       }),
       Type.Object({
         type: Type.Literal("insert_after"),
-        anchor: Type.String({ description: "Anchor only, e.g. 180:a3f. Exclude '|content'." }),
+        anchor: Type.String({ description: "Anchor only, e.g. ABCDE. Exclude '|content'." }),
         lines: Type.Array(Type.String(), { minItems: 1, description: "Lines to insert after the anchor." }),
       }),
     ]),
@@ -62,9 +62,7 @@ export type StructuredEditOp =
   | { type: "insert_after"; anchor: string; lines: string[] };
 
 export type Edit = {
-  startLine: number;
-  startHash: number;
-  endLine: number;
-  endHash: number;
+  start: string;
+  end?: string;
   lines: string[];
 };

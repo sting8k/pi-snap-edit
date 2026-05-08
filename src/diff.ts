@@ -32,6 +32,17 @@ export function formatContexts(lines: string[], ranges: ContextRange[]): string 
   return merged.map((range) => hashLines(lines.slice(range.startIndex, range.endIndex), range.startIndex + 1)).join("\n---\n");
 }
 
+function hashCounts(lines: string[]): { hashes: string[]; counts: Map<string, number> } {
+  const hashes = lines.map((line) => formatHash(lineHash(line)));
+  const counts = new Map<string, number>();
+  for (const hash of hashes) counts.set(hash, (counts.get(hash) ?? 0) + 1);
+  return { hashes, counts };
+}
+
+function displayedHash(hash: string, counts: Map<string, number>): string {
+  return counts.get(hash) === 1 ? hash : "-----";
+}
+
 export function formatDiffs(diffs: EditDiff[]): string {
   if (diffs.length === 0) return "";
   const chunks: string[] = ["── diff ──"];
@@ -45,15 +56,16 @@ export function formatDiffs(diffs: EditDiff[]): string {
       chunks.push(`:${diff.oldStart}-${Math.max(oldEnd, newEnd)}`);
     }
 
+    const old = hashCounts(diff.oldLines);
+    const next = hashCounts(diff.newLines);
+
     for (let i = 0; i < diff.oldLines.length; i++) {
-      const lineNo = diff.oldStart + i;
       const line = diff.oldLines[i]!;
-      chunks.push(`- ${lineNo}:${formatHash(lineHash(line))}|${line}`);
+      chunks.push(`- ${displayedHash(old.hashes[i]!, old.counts)}|${line}`);
     }
     for (let i = 0; i < diff.newLines.length; i++) {
-      const lineNo = diff.newStart + i;
       const line = diff.newLines[i]!;
-      chunks.push(`+ ${lineNo}:${formatHash(lineHash(line))}|${line}`);
+      chunks.push(`+ ${displayedHash(next.hashes[i]!, next.counts)}|${line}`);
     }
     chunks.push("");
   }

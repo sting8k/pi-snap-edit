@@ -35,10 +35,10 @@ export function color(theme: QuickEditTheme, role: string, text: string): string
 }
 
 function renderAnchoredLine(theme: QuickEditTheme, marker: string, line: string, role: string): string | undefined {
-  const match = line.match(/^(\d+):([0-9a-f]{3})\|(.*)$/);
+  const match = line.match(/^([A-Z2-7]{5})\|(.*)$/);
   if (!match) return undefined;
-  const [, lineNo, hash, content] = match;
-  const gutter = `${marker} ${lineNo}:${hash} │ `;
+  const [, hash, content] = match;
+  const gutter = `${marker} ${hash} │ `;
   return `${color(theme, "muted", gutter)}${color(theme, role, content ?? "")}`;
 }
 

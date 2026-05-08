@@ -4,31 +4,34 @@ import { CONTEXT_LINES, formatContexts, formatDiffs, type ContextRange, type Edi
 import type { AnchorRangeInput, StructuredEditOp } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
-function validateAnchorLine(lines: string[], anchorText: string, label: string): number {
+function resolveAnchorLine(lines: string[], anchorText: string, label: string): number {
   const anchor = parseAnchor(anchorText);
   if (!anchor) throw new Error(`${label}: ${invalidAnchorMessage(anchorText)}`);
-  const { line: lineNo, hash: expectedHash } = anchor;
-  const total = lines.length;
-  if (lineNo < 1 || lineNo > total) {
-    throw new Error(`${label} line ${lineNo} out of bounds (file has ${total} lines)`);
+  const matches: number[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (lineHash(line) === anchor.hash) matches.push(index + 1);
   }
 
-  const actualHash = lineHash(lines[lineNo - 1]!);
-  if (actualHash !== expectedHash) {
-    const contextStart = Math.max(0, lineNo - 3);
-    const contextEnd = Math.min(total, lineNo + 2);
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) {
     throw new Error(
-      `hash mismatch at ${label} line ${lineNo} (expected ${formatHash(expectedHash)}, got ${formatHash(actualHash)}):\n` +
-        hashLines(lines.slice(contextStart, contextEnd), contextStart + 1),
+      `ambiguous anchor ${formatHash(anchor.hash)} at ${label}: matched ${matches.length} current lines ` +
+        `(${matches.slice(0, 8).join(", ")}${matches.length > 8 ? ", ..." : ""})`,
     );
   }
 
-  return lineNo;
+  const index = 0;
+  const contextStart = Math.max(0, index - 2);
+  const contextEnd = Math.min(lines.length, index + 3);
+  throw new Error(
+    `stale anchor ${anchorText} at ${label}: no current line has matching hash:\n` +
+      hashLines(lines.slice(contextStart, contextEnd), contextStart + 1),
+  );
 }
 
 function validateAnchorRange(lines: string[], range: AnchorRangeInput, label: string): { startLine: number; endLine: number } {
-  const startLine = validateAnchorLine(lines, range.start, `${label} start`);
-  const endLine = range.end ? validateAnchorLine(lines, range.end, `${label} end`) : startLine;
+  const startLine = resolveAnchorLine(lines, range.start, `${label} start`);
+  const endLine = range.end ? resolveAnchorLine(lines, range.end, `${label} end`) : startLine;
   if (endLine < startLine) {
     throw new Error(`Invalid ${label} range: ${startLine}-${endLine} (end < start)`);
   }
@@ -77,8 +80,8 @@ export async function applyStructuredEdits(
     appliedLineEdits.push({ startLine, endLine, delta: newLines.length - (endLine - startLine + 1) });
   };
 
-  const applyInsert = (anchor: string, insertedLines: string[], after: boolean, label: string) => {
-    const lineNo = validateAnchorLine(originalLines, anchor, label);
+  const applyInsert = (anchorText: string, insertedLines: string[], after: boolean, label: string) => {
+    const lineNo = resolveAnchorLine(originalLines, anchorText, label);
     const currentLine = adjustedLine(lineNo);
     const insertIndex = after ? currentLine : currentLine - 1;
     currentLines.splice(insertIndex, 0, ...insertedLines);
@@ -100,7 +103,7 @@ export async function applyStructuredEdits(
     if (op.old.includes("\n") || op.old.includes("\r") || op.new.includes("\n") || op.new.includes("\r")) {
       throw new Error(
         "substitute old/new must be single-line. For multi-line changes use: " +
-          '{"type":"replace_lines","start":"70:8b1","end":"73:8a8","lines":["..."]}',
+          '{"type":"replace_lines","start":"ABCDE","end":"VWXYZ","lines":["..."]}',
       );
     }
     if (op.old === op.new) throw new Error("substitute old and new must differ");

@@ -1,16 +1,58 @@
 import { promises as fs } from "node:fs";
-import { formatHash, hashLines, lineHash } from "./anchors.js";
+import { formatHash, hashLines, lineHash, parseAnchor } from "./anchors.js";
 import { CONTEXT_LINES, formatContexts, formatDiffs, type ContextRange, type EditDiff } from "./diff.js";
 import type { Edit } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
-function staleAnchorMessage(lineNo: number, expectedHash: number, actualHash: number, context: string): string {
+type ResolvedEdit = {
+  startLine: number;
+  startHash: string;
+  endLine: number;
+  endHash: string;
+  lines: string[];
+};
+
+function contextFor(lines: string[], lineNo: number): string {
+  const total = lines.length;
+  const index = Math.max(0, Math.min(total - 1, lineNo - 1));
+  const contextStart = Math.max(0, index - 2);
+  const contextEnd = Math.min(total, index + 3);
+  return hashLines(lines.slice(contextStart, contextEnd), contextStart + 1);
+}
+
+function staleAnchorMessage(anchorText: string, context: string): string {
   return (
-    `Stale anchor at line ${lineNo}: supplied ${lineNo}:${formatHash(expectedHash)}, current hash is ${formatHash(actualHash)}.\n` +
-    "Current content around this line:\n" +
+    `Stale anchor ${anchorText}: no current line has matching hash; no edits were applied.\n` +
+    "Current content near the start of the file:\n" +
     context +
     "\nReview the current content before retrying with a new anchor."
   );
+}
+
+function resolveAnchorLine(lines: string[], anchorText: string, label: string): { line: number; hash: string; note?: string } {
+  const anchor = parseAnchor(anchorText);
+  if (!anchor) throw new Error(`${label}: invalid anchor '${anchorText}'. Expected '<hash>', e.g. 'ABCDE'.`);
+
+  const total = lines.length;
+  const matches: number[] = [];
+  for (const [index, line] of lines.entries()) {
+    if (lineHash(line) === anchor.hash) matches.push(index + 1);
+  }
+
+  if (matches.length === 1) {
+    return { line: matches[0]!, hash: anchor.hash };
+  }
+
+  if (matches.length > 1) {
+    throw new Error(
+      `${label}: ambiguous anchor ${formatHash(anchor.hash)} matched ${matches.length} current lines ` +
+        `(${matches.slice(0, 8).join(", ")}${matches.length > 8 ? ", ..." : ""}); no edits were applied. ` +
+        "Use a narrower range or read the target area again.",
+    );
+  }
+
+  const context = hashLines(lines.slice(0, Math.min(total, 5)), 1);
+  throw new Error(staleAnchorMessage(anchorText, context));
 }
 
 export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Promise<string> {
@@ -18,54 +60,20 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
 
   const content = await fs.readFile(absolutePath, "utf8");
   const lines = splitLines(content);
-  const total = lines.length;
   const mismatches: string[] = [];
+  const resolved: ResolvedEdit[] = [];
+  const resolveNotes: string[] = [];
 
-  for (const edit of edits) {
-    if (edit.startLine < 1 || edit.startLine > total) {
-      mismatches.push(`Line ${edit.startLine} out of bounds (file has ${total} lines)`);
-      continue;
-    }
-    if (edit.endLine < 1 || edit.endLine > total) {
-      mismatches.push(`Line ${edit.endLine} out of bounds (file has ${total} lines)`);
-      continue;
-    }
-    if (edit.endLine < edit.startLine) {
-      mismatches.push(`Invalid range: ${edit.startLine}-${edit.endLine} (end < start)`);
-      continue;
-    }
-
-    const startIndex = edit.startLine - 1;
-    const actualStartHash = lineHash(lines[startIndex]!);
-    if (actualStartHash !== edit.startHash) {
-      const contextStart = Math.max(0, startIndex - 2);
-      const contextEnd = Math.min(total, startIndex + 3);
-      mismatches.push(
-        staleAnchorMessage(
-          edit.startLine,
-          edit.startHash,
-          actualStartHash,
-          hashLines(lines.slice(contextStart, contextEnd), contextStart + 1),
-        ),
-      );
-      continue;
-    }
-
-    if (edit.endLine !== edit.startLine) {
-      const endIndex = edit.endLine - 1;
-      const actualEndHash = lineHash(lines[endIndex]!);
-      if (actualEndHash !== edit.endHash) {
-        const contextStart = Math.max(0, endIndex - 2);
-        const contextEnd = Math.min(total, endIndex + 3);
-        mismatches.push(
-          staleAnchorMessage(
-            edit.endLine,
-            edit.endHash,
-            actualEndHash,
-            hashLines(lines.slice(contextStart, contextEnd), contextStart + 1),
-          ),
-        );
-      }
+  for (const [index, edit] of edits.entries()) {
+    try {
+      const start = resolveAnchorLine(lines, edit.start, `edit[${index}] start`);
+      const end = edit.end === undefined ? start : resolveAnchorLine(lines, edit.end, `edit[${index}] end`);
+      if (end.line < start.line) throw new Error(`Invalid range: ${start.line}-${end.line} (end < start)`);
+      if (start.note) resolveNotes.push(start.note);
+      if (end.note) resolveNotes.push(end.note);
+      resolved.push({ startLine: start.line, startHash: start.hash, endLine: end.line, endHash: end.hash, lines: edit.lines });
+    } catch (error) {
+      mismatches.push(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -73,7 +81,7 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
     throw new Error(`stale anchor — file changed since last read; no edits were applied.\n\n${mismatches.join("\n\n")}`);
   }
 
-  const ranges = edits.map((edit) => [edit.startLine, edit.endLine] as const).sort((a, b) => a[0] - b[0]);
+  const ranges = resolved.map((edit) => [edit.startLine, edit.endLine] as const).sort((a, b) => a[0] - b[0]);
   for (let i = 1; i < ranges.length; i++) {
     const prev = ranges[i - 1]!;
     const curr = ranges[i]!;
@@ -82,14 +90,13 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
     }
   }
 
-  const oldSnapshots = edits.map((edit) => lines.slice(edit.startLine - 1, edit.endLine));
+  const oldSnapshots = resolved.map((edit) => lines.slice(edit.startLine - 1, edit.endLine));
   const updated = [...lines];
-  const indices = edits.map((_, i) => i).sort((a, b) => edits[b]!.startLine - edits[a]!.startLine);
+  const indices = resolved.map((_, i) => i).sort((a, b) => resolved[b]!.startLine - resolved[a]!.startLine);
 
   for (const idx of indices) {
-    const edit = edits[idx]!;
-    const replacement = edit.lines;
-    updated.splice(edit.startLine - 1, edit.endLine - edit.startLine + 1, ...replacement);
+    const edit = resolved[idx]!;
+    updated.splice(edit.startLine - 1, edit.endLine - edit.startLine + 1, ...edit.lines);
   }
 
   const lineEnding = detectLineEnding(content);
@@ -98,13 +105,13 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
   if (hasTrailingNewline) newContent += lineEnding;
   await fs.writeFile(absolutePath, newContent, "utf8");
 
-  const ordered = edits.map((_, i) => i).sort((a, b) => edits[a]!.startLine - edits[b]!.startLine);
+  const ordered = resolved.map((_, i) => i).sort((a, b) => resolved[a]!.startLine - resolved[b]!.startLine);
   let offset = 0;
   const contextRanges: ContextRange[] = [];
   const diffs: EditDiff[] = [];
 
   for (const idx of ordered) {
-    const edit = edits[idx]!;
+    const edit = resolved[idx]!;
     const adjusted = Math.max(0, edit.startLine - 1 + offset);
     const oldCount = edit.endLine - edit.startLine + 1;
     const newLines = edit.lines;
@@ -120,6 +127,7 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
   }
 
   const parts: string[] = [];
+  if (resolveNotes.length > 0) parts.push(`── resolved anchors ──\n${resolveNotes.join("\n")}`);
   const diff = formatDiffs(diffs);
   if (diff) parts.push(diff);
   const contexts = formatContexts(updated, contextRanges);

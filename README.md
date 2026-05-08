@@ -14,7 +14,7 @@ Pain points from my own agent workflow:
 
 ## Behavior
 
-- Hooks Pi's core `read` result and adds `<line>:<hash>|<content>` anchors to text output.
+- Hooks Pi's core `read` result and adds 5-character `<hash>|<content>` anchors to text output.
 - Adds `quick_edit` (`quick-edit`) for direct anchored line/range replacements.
 - Adds `structured_edit` (`structured-edit`) for scoped counted substitutions and anchored insert/delete/replace operations.
 - Does not override Pi's built-in `edit` tool, but removes `edit` from active tools so agents use `quick_edit` or `structured_edit`.
@@ -44,15 +44,17 @@ pi -e ./src/index.ts
 
 Read first, then use anchors with `quick_edit`:
 
-Copy only the anchor prefix before `|`, e.g. `42:a3f`; do not include `|content` in `start`, `end`, `scope`, or `anchor` fields.
+Copy only the 5-character hash before `|`, e.g. `ABCDE`; do not include `|content` in `start`, `end`, `scope`, or `anchor` fields.
+
+Lines shown as `-----|content` are duplicates/collisions and intentionally have no valid direct anchor. To edit them, anchor a surrounding range with nearby unique hashes and preserve unchanged context lines.
 
 ```json
 {
   "path": "src/foo.ts",
   "edits": [
     {
-      "start": "42:a3f",
-      "end": "46:e1d",
+      "start": "ABCDE",
+      "end": "VWXYZ",
       "lines": ["replacement line 1", "replacement line 2"]
     }
   ]
@@ -66,7 +68,7 @@ Use `structured_edit` when several small operations inside a long block are clea
 ```json
 {
   "path": "src/foo.ts",
-  "scope": { "start": "120:abc", "end": "260:def" },
+  "scope": { "start": "ABCDE", "end": "VWXYZ" },
   "ops": [
     {
       "type": "substitute",
@@ -76,13 +78,13 @@ Use `structured_edit` when several small operations inside a long block are clea
     },
     {
       "type": "insert_after",
-      "anchor": "180:a3f",
+      "anchor": "LMNO7",
       "lines": ["  client.setTimeout(timeout);"]
     },
     {
       "type": "delete_lines",
-      "start": "210:aaa",
-      "end": "214:bbb"
+      "start": "QRST7",
+      "end": "UVWX2"
     }
   ]
 }
@@ -90,4 +92,4 @@ Use `structured_edit` when several small operations inside a long block are clea
 
 `substitute` is single-line and uses `count` as an assertion. Use `replace_lines`, `delete_lines`, `insert_before`, or `insert_after` for line-oriented changes.
 
-For EOF append, use `structured_edit` with `insert_after` on the last anchored line. `quick_edit` intentionally edits existing anchored lines/ranges only; it does not accept synthetic line numbers past EOF.
+For EOF append, use `structured_edit` with `insert_after` on the last anchored line. `quick_edit` intentionally edits existing anchored lines/ranges only. If a hash matches multiple current lines, the edit is rejected as ambiguous; narrow the scope or read the target area again.

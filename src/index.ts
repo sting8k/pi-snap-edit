@@ -2,7 +2,6 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { keyHint, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import path from "node:path";
-import { invalidAnchorMessage, parseAnchor } from "./anchors.js";
 import { preferQuickEditTools } from "./active-tools.js";
 import { applyQuickEdits } from "./quick-edit.js";
 import { hashReadText } from "./read-hook.js";
@@ -24,13 +23,13 @@ const STRUCTURED_OP_TYPES = ["substitute", "replace_lines", "delete_lines", "ins
 
 const STRUCTURED_OP_EXAMPLES: Record<string, string> = {
   substitute: '{"type":"substitute","old":"...","new":"...","count":1}',
-  replace_lines: '{"type":"replace_lines","start":"70:8b1","end":"73:8a8","lines":["..."]}',
-  delete_lines: '{"type":"delete_lines","start":"70:8b1","end":"73:8a8"}',
-  insert_before: '{"type":"insert_before","anchor":"70:8b1","lines":["..."]}',
-  insert_after: '{"type":"insert_after","anchor":"70:8b1","lines":["..."]}',
+  replace_lines: '{"type":"replace_lines","start":"ABCDE","end":"VWXYZ","lines":["..."]}',
+  delete_lines: '{"type":"delete_lines","start":"ABCDE","end":"VWXYZ"}',
+  insert_before: '{"type":"insert_before","anchor":"ABCDE","lines":["..."]}',
+  insert_after: '{"type":"insert_after","anchor":"ABCDE","lines":["..."]}',
 };
 
-const SCOPE_EXAMPLE = '"scope":{"start":"70:8b1","end":"73:8a8"}';
+const SCOPE_EXAMPLE = '"scope":{"start":"ABCDE","end":"VWXYZ"}';
 const OPS_EXAMPLE = `"ops":[${STRUCTURED_OP_EXAMPLES.replace_lines}]`;
 
 function resolvePath(cwd: string, inputPath: string): string {
@@ -120,11 +119,11 @@ export default function (pi: ExtensionAPI) {
     name: "quick_edit",
     label: "quick-edit",
     description:
-      "Edit a file using read anchors. Anchor fields must be only the <line>:<hash> prefix before '|'; never include '|content'. Replaces the inclusive range from start to end with lines[]. Atomic: any invalid edit rejects the whole batch.",
-    promptSnippet: "Safely edit files using read's <line>:<hash> anchor prefix",
+      "Edit a file using read anchors. Anchor fields must be only the <hash> prefix before '|'; never include '|content'. Replaces the inclusive range from start to end with lines[]. Atomic: any invalid edit rejects the whole batch.",
+    promptSnippet: "Safely edit files using read's <hash> anchor prefix",
     promptGuidelines: [
       "Use quick_edit for one simple anchored range replacement, or batch multiple independent ranges from the same latest read in one call.",
-      "Copy only the <line>:<hash> prefix before '|', e.g. '11:f80'. Never include '|content'.",
+      "Copy only the <hash> prefix before '|', e.g. 'ABCDE'. Never include '|content'.",
       "Use start/end anchors only; put replacement text only in lines[]. Use lines: [] to delete.",
       "After any successful edit/write, use anchors from the latest tool output for nearby follow-up edits; otherwise read again before another quick_edit.",
       "For several small edits in one file, prefer one structured_edit call over multiple quick_edit calls.",
@@ -133,22 +132,7 @@ export default function (pi: ExtensionAPI) {
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const absolutePath = resolvePath(ctx.cwd, params.path);
-      const edits = params.edits.map((edit, i) => {
-        const start = parseAnchor(edit.start);
-        if (!start) throw new Error(`edit[${i}]: ${invalidAnchorMessage(edit.start)}`);
-        const endText = edit.end;
-        const end = endText === undefined ? start : parseAnchor(endText);
-        if (!end) throw new Error(`edit[${i}]: ${invalidAnchorMessage(endText ?? "")}`);
-        return {
-          startLine: start.line,
-          startHash: start.hash,
-          endLine: end.line,
-          endHash: end.hash,
-          lines: edit.lines,
-        };
-      });
-
-      const text = await withFileMutationQueue(absolutePath, () => applyQuickEdits(absolutePath, edits));
+        const text = await withFileMutationQueue(absolutePath, () => applyQuickEdits(absolutePath, params.edits));
       return { content: [{ type: "text" as const, text }], details: undefined };
     },
 
@@ -174,12 +158,12 @@ export default function (pi: ExtensionAPI) {
     name: "structured_edit",
     label: "structured-edit",
     description:
-      "Edit a file with structured operations. Anchor fields must be only the <line>:<hash> prefix before '|'; never include '|content'. Uses counted substitutions and anchored line operations atomically.",
-    promptSnippet: "Apply substitutions and line ops using only <line>:<hash> anchors",
+      "Edit a file with structured operations. Anchor fields must be only the <hash> prefix before '|'; never include '|content'. Uses counted substitutions and anchored line operations atomically.",
+    promptSnippet: "Apply substitutions and line ops using only <hash> anchors",
     promptGuidelines: [
       "Use structured_edit for several edits in one file from the same latest read snapshot.",
-      "For every scope/start/end/anchor field, copy only the <line>:<hash> prefix before '|', e.g. '11:f80'.",
-      "Correct shape example: {\"path\":\"file\",\"scope\":{\"start\":\"70:8b1\",\"end\":\"73:8a8\"},\"ops\":[{\"type\":\"replace_lines\",\"start\":\"70:8b1\",\"end\":\"73:8a8\",\"lines\":[\"...\"]}]}",
+      "For every scope/start/end/anchor field, copy only the <hash> prefix before '|', e.g. 'ABCDE'.",
+      "Correct shape example: {\"path\":\"file\",\"scope\":{\"start\":\"ABCDE\",\"end\":\"VWXYZ\"},\"ops\":[{\"type\":\"replace_lines\",\"start\":\"ABCDE\",\"end\":\"VWXYZ\",\"lines\":[\"...\"]}]}",
       "Use replace_lines for anchored range replacement; use substitute only for single-line old/new strings.",
       "Use insert_after on the last anchored line to append content at EOF.",
       "Do not make multiple quick_edit calls in the same file when one structured_edit call can express the changes.",

@@ -1,29 +1,38 @@
-export function lineHash(line: string): number {
-  let h = 0x811c9dc5;
-  for (const b of Buffer.from(line, "utf8")) {
-    h ^= b;
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h & 0xfff;
+import { createHash } from "node:crypto";
+
+const BASE32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const HASH_PATTERN = "[A-Z2-7]{5}";
+
+export type Anchor = {
+  hash: string;
+};
+
+export function lineHash(line: string): string {
+  const digest = createHash("sha256").update(line, "utf8").digest();
+  const value = (digest[0]! << 17) | (digest[1]! << 9) | (digest[2]! << 1) | (digest[3]! >>> 7);
+  let hash = "";
+  for (let shift = 20; shift >= 0; shift -= 5) hash += BASE32[(value >>> shift) & 31]!;
+  return hash;
 }
 
-export function formatHash(hash: number): string {
-  return hash.toString(16).padStart(3, "0");
+export function formatHash(hash: string): string {
+  return hash;
 }
 
-export function hashLines(lines: string[], startLine: number): string {
-  return lines.map((line, i) => `${startLine + i}:${formatHash(lineHash(line))}|${line}`).join("\n");
+export function hashLines(lines: string[], _startLine: number): string {
+  const hashes = lines.map((line) => formatHash(lineHash(line)));
+  const counts = new Map<string, number>();
+  for (const hash of hashes) counts.set(hash, (counts.get(hash) ?? 0) + 1);
+
+  return lines
+    .map((line, i) => `${counts.get(hashes[i]!) === 1 ? hashes[i] : "-----"}|${line}`)
+    .join("\n");
 }
 
-export function parseAnchor(anchor: string): { line: number; hash: number } | undefined {
-  const [lineText, hashText, ...extra] = anchor.split(":");
-  const linePart = lineText?.trim();
-  const hashPart = hashText?.trim();
-  if (!linePart || !hashPart || extra.length > 0 || !/^\d+$/.test(linePart) || !/^[0-9a-f]+$/i.test(hashPart)) return undefined;
-  const line = Number.parseInt(linePart, 10);
-  const hash = Number.parseInt(hashPart, 16);
-  if (line < 1 || hash < 0) return undefined;
-  return { line, hash };
+export function parseAnchor(anchor: string): Anchor | undefined {
+  const text = anchor.trim();
+  const hashOnly = new RegExp(`^${HASH_PATTERN}$`, "i");
+  return hashOnly.test(text) ? { hash: text.toUpperCase() } : undefined;
 }
 
 export function invalidAnchorMessage(anchor: string): string {
@@ -31,5 +40,5 @@ export function invalidAnchorMessage(anchor: string): string {
   if (anchor.includes("|") && parseAnchor(prefix)) {
     return `invalid anchor '${anchor}'. Use only '${prefix}' before '|'.`;
   }
-  return `invalid anchor '${anchor}'. Expected '<line>:<hash>', e.g. '11:f80'.`;
+  return `invalid anchor '${anchor}'. Expected '<hash>', e.g. 'ABCDE'.`;
 }
