@@ -134,6 +134,28 @@ describe("quick edits", () => {
     assert.match(result, /\+ .+\|TWO/);
   });
 
+  it("checks expectedStartLine before editing", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
+
+    await applyQuickEdits(file, await fileHashFor(file), [{ start: 2, expectedStartLine: "two", lines: ["TWO"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\nTWO\nthree\n");
+  });
+
+  it("rejects expectedStartLine mismatch atomically", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
+
+    const fileHash = await fileHashFor(file);
+    await assert.rejects(
+      () => applyQuickEdits(file, fileHash, [
+        { start: 1, lines: ["ONE"] },
+        { start: 2, expectedStartLine: "not two", lines: ["TWO"] },
+      ]),
+      /edit\[1\] expectedStartLine mismatch at line 2; no edits were applied[\s\S]*expected: "not two"[\s\S]*actual: "two"/,
+    );
+    assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
+  });
+
   it("applies multi-line replacements in reverse order without shifting later lines", async () => {
     const original = ["a", "b", "c", "d", "e"];
     const file = await tempFile("sample.txt", `${original.join("\n")}\n`);

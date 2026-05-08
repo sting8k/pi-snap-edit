@@ -48,6 +48,22 @@ export async function applyQuickEdits(absolutePath: string, fileHash: string, ed
   const lines = splitLines(content);
   const resolved = edits.map((edit, index) => validateLineRange(lines.length, edit, `edit[${index}]`));
 
+  for (let index = 0; index < edits.length; index++) {
+    const expectedStartLine = edits[index]!.expectedStartLine;
+    if (expectedStartLine === undefined) continue;
+
+    const actual = lines[resolved[index]!.startLine - 1];
+    if (actual !== expectedStartLine) {
+      throw new Error(
+        [
+          `edit[${index}] expectedStartLine mismatch at line ${resolved[index]!.startLine}; no edits were applied.`,
+          `expected: ${JSON.stringify(expectedStartLine)}`,
+          `actual: ${JSON.stringify(actual)}`,
+        ].join("\n"),
+      );
+    }
+  }
+
   const ranges = resolved.map((edit) => [edit.startLine, edit.endLine] as const).sort((a, b) => a[0] - b[0]);
   for (let i = 1; i < ranges.length; i++) {
     const prev = ranges[i - 1]!;

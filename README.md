@@ -66,13 +66,14 @@ Then edit by line number with `quick_edit`:
     {
       "start": 42,
       "end": 45,
+      "expectedStartLine": "old line 42",
       "lines": ["replacement line 1", "replacement line 2"]
     }
   ]
 }
 ```
 
-Omit `end` for a single-line replacement. Use `lines: []` to delete a line or range. Use `lines: [""]` to replace with one blank line. Use `start: lineCount + 1` with no `end` to insert at EOF; for an empty file, `start: 1` inserts the first line.
+Omit `end` for a single-line replacement. Use `lines: []` to delete a line or range. Use `lines: [""]` to replace with one blank line. Use `start: lineCount + 1` with no `end` to insert at EOF; for an empty file, `start: 1` inserts the first line. Use `expectedStartLine` as an optional exact guard for the current `start` line only; it does not check the full range.
 
 For literal substitutions inside a known range, use `substitute_edit`:
 

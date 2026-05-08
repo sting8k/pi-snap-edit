@@ -11,6 +11,7 @@ export const QuickEditParams = Type.Object({
     Type.Object({
       start: Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF." }),
       end: Type.Optional(Type.Integer({ minimum: 1, description: "Optional 1-indexed inclusive end line number." })),
+      expectedStartLine: Type.Optional(Type.String({ description: "Optional exact guard for the current start line only. Does not check the full range." })),
       lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it." }),
     }),
     { minItems: 1, description: "Line-number edits to apply atomically. Use start=lineCount+1 with no end to insert at EOF. fileHash is required." },
@@ -94,5 +95,6 @@ export type Substitution = {
 export type Edit = {
   start: number;
   end?: number;
+  expectedStartLine?: string;
   lines: string[];
 };

@@ -134,6 +134,7 @@ export default function (pi: ExtensionAPI) {
       "Use start/end as 1-indexed line numbers from read, rg -n, grep -n, or srcwalk output, but keep fileHash from read.",
       `Omit end for a single-line replacement. Use lines: [] to delete a line or range. Use lines: [""] for one blank line.`,
       "Use start=lineCount+1 with no end to insert at EOF; for an empty file, start=1 inserts the first line.",
+      "Use expectedStartLine when you want an exact guard for the current start line only; it does not check the full range.",
       "Batch multiple independent ranges in one call; overlapping ranges are rejected atomically.",
       "If quick_edit reports a stale fileHash, read the current file/range again before retrying.",
     ],
