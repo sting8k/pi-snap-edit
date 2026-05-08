@@ -46,8 +46,7 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
       throw new Error(
         [
           `edit[${index}] expectedStartLine mismatch at line ${resolved[index]!.startLine}; no edits were applied.`,
-          `expected: ${JSON.stringify(expectedStartLine)}`,
-          `actual: ${JSON.stringify(actual)}`,
+          "Read the file to see current content.",
         ].join("\n"),
       );
     }

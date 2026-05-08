@@ -164,7 +164,7 @@ describe("quick edits", () => {
         { start: 1, expectedStartLine: "one", lines: ["ONE"] },
         { start: 2, expectedStartLine: "not two", lines: ["TWO"] },
       ]),
-      /edit\[2\] expectedStartLine mismatch at line 2; no edits were applied[\s\S]*expected: "not two"[\s\S]*actual: "two"/,
+      /edit\[2\] expectedStartLine mismatch at line 2; no edits were applied[\s\S]*Read the file to see current content/,
     );
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
