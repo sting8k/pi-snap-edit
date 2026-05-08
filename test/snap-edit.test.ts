@@ -90,12 +90,12 @@ describe("hash helpers", () => {
 
 describe("read result hashing hook", () => {
   it("adds a fileHash header to plain core read text", () => {
-    assert.equal(hashReadText("alpha\nbeta", "abc123"), "fileHash: abc123\n\nalpha\nbeta");
+    assert.equal(hashReadText("alpha\nbeta", "abc123"), "fileHash: abc123\n\n1| alpha\n2| beta");
   });
 
   it("preserves core read continuation notices", () => {
     const text = "alpha\nbeta\n\n[Showing lines 5-6 of 20. Use offset=7 to continue.]";
-    assert.equal(hashReadText(text, "abc123"), "fileHash: abc123\n\nalpha\nbeta\n\n[Showing lines 5-6 of 20. Use offset=7 to continue.]");
+    assert.equal(hashReadText(text, "abc123"), "fileHash: abc123\n\n1| alpha\n2| beta\n\n[Showing lines 5-6 of 20. Use offset=7 to continue.]");
   });
 
   it("does not alter image read notes", () => {

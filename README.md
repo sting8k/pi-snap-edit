@@ -12,17 +12,27 @@ Pain points from agent workflow:
 - For complex changes, agents often use ad-hoc Python scripts, which are harder to review.
 - Most search tools (`rg -n`, `grep -n`, src maps) naturally return line numbers, not custom anchors.
 
-`pi-snap-edit` is experimenting with a simpler model: edit by line number or counted literal substitutions, but require a content file hash so stale edits are rejected.
+`pi-snap-edit` uses a simpler model: edit by line number or counted literal substitutions, but require a content file hash so stale edits are rejected.
 
 ## Behavior
 
-- Hooks `read` output to include a short content `fileHash`.
+- Hooks `read` output to include a short content `fileHash` and visible `1| ` line numbers.
 - Adds `quick_edit` for atomic line/range replacements using 1-indexed line numbers.
 - Adds `substitute_edit` for ordered counted literal substitutions inside a required line range.
 - Edit tools require `fileHash`; if the file changed since `read`, no edits are applied.
 - Preserves line endings, including CRLF and no-trailing-newline files.
 - Rejects invalid ranges, count mismatches, and overlapping line edits without partial writes.
-- Does not rewrite Pi `read` lines into custom anchors; the read hook only prepends `fileHash`.
+- Does not rewrite Pi `read` lines into custom hash anchors; the read hook prepends `fileHash` and visible line numbers only.
+
+## Why not line anchors
+
+Earlier designs rewrote `read` output as `<line>:<hash>|<content>` anchors and edited by those anchors. That failed in common agent loops:
+
+- After any successful edit, old anchors became stale and could not safely identify current lines.
+- Multi-line changes were easy to express with the wrong operation, especially when an agent tried to use single-line substitution for a multi-line replacement.
+- Hash/anchor mismatches forced a fresh read anyway, and returning the current hash on failure would let agents retry without reading the file.
+
+The current model avoids those failures: line numbers are visible directly in `read` output and normal tools, edits require the latest `fileHash`, stale failures do not reveal the current hash, and agents must read again before retrying.
 
 ## Install
 
@@ -38,7 +48,7 @@ pi -e ./src/index.ts
 
 ## Usage
 
-First read the file or relevant range; read output includes `fileHash`:
+First read the file or relevant range; read output includes `fileHash` plus `1| ` line numbers:
 
 ```json
 {
@@ -80,7 +90,7 @@ For literal substitutions inside a known range, use `substitute_edit`:
 
 Substitutions are literal, single-line, ordered, and counted. Use `quick_edit` for multi-line changes.
 
-Line numbers can come from Pi `read`, `rg -n`, `grep -n`, src maps, or any CLI output. EOF insert uses the virtual line immediately after the last line. If an edit reports a stale `fileHash`, read the current file/range again and retry with updated line numbers/hash.
+Line numbers can come from Pi `read` (`1| ` prefixes), `rg -n`, `grep -n`, src maps, or any CLI output. EOF insert uses the virtual line immediately after the last line. If an edit reports a stale `fileHash`, read the current file/range again and retry with updated line numbers/hash.
 
 ## Verification
 
