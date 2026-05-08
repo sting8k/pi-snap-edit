@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { formatHash, hashLines, lineHash, parseAnchor } from "./anchors.js";
+import { formatAmbiguousAnchorCandidates, formatHash, hashLines, lineHash, parseAnchor } from "./anchors.js";
 import { CONTEXT_LINES, formatContexts, formatDiffs, type ContextRange, type EditDiff } from "./diff.js";
 import type { Edit } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
@@ -12,20 +12,24 @@ type ResolvedEdit = {
   lines: string[];
 };
 
-function contextFor(lines: string[], lineNo: number): string {
-  const total = lines.length;
-  const index = Math.max(0, Math.min(total - 1, lineNo - 1));
-  const contextStart = Math.max(0, index - 2);
-  const contextEnd = Math.min(total, index + 3);
-  return hashLines(lines.slice(contextStart, contextEnd), contextStart + 1);
+class AmbiguousAnchorError extends Error {
+  constructor(
+    public readonly hash: string,
+    public readonly matches: number[],
+    public readonly label: string,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
-function staleAnchorMessage(anchorText: string, context: string): string {
+function ambiguousAnchorMessage(lines: string[], label: string, hash: string, matches: number[]): string {
+  const candidates = formatAmbiguousAnchorCandidates(lines, matches, hash);
   return (
-    `Stale anchor ${anchorText}: no current line has matching hash; no edits were applied.\n` +
-    "Current content near the start of the file:\n" +
-    context +
-    "\nReview the current content before retrying with a new anchor."
+    `${label}: ambiguous anchor ${formatHash(hash)} matched ${matches.length} current lines ` +
+    `(${matches.slice(0, 8).join(", ")}${matches.length > 8 ? ", ..." : ""}); no edits were applied. ` +
+    "Use a narrower range or read the target area again." +
+    (candidates ? `\n\nCandidate contexts:\n${candidates}` : "")
   );
 }
 
@@ -44,15 +48,10 @@ function resolveAnchorLine(lines: string[], anchorText: string, label: string): 
   }
 
   if (matches.length > 1) {
-    throw new Error(
-      `${label}: ambiguous anchor ${formatHash(anchor.hash)} matched ${matches.length} current lines ` +
-        `(${matches.slice(0, 8).join(", ")}${matches.length > 8 ? ", ..." : ""}); no edits were applied. ` +
-        "Use a narrower range or read the target area again.",
-    );
+    throw new AmbiguousAnchorError(anchor.hash, matches, label, ambiguousAnchorMessage(lines, label, anchor.hash, matches));
   }
 
-  const context = hashLines(lines.slice(0, Math.min(total, 5)), 1);
-  throw new Error(staleAnchorMessage(anchorText, context));
+  throw new Error(`Stale anchor ${anchorText} at ${label}: no current line has matching hash; no edits were applied. Read the file again.`);
 }
 
 export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Promise<string> {
@@ -61,6 +60,7 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
   const content = await fs.readFile(absolutePath, "utf8");
   const lines = splitLines(content);
   const mismatches: string[] = [];
+  const ambiguous = new Map<string, { labels: string[]; matches: number[] }>();
   const resolved: ResolvedEdit[] = [];
   const resolveNotes: string[] = [];
 
@@ -73,12 +73,25 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
       if (end.note) resolveNotes.push(end.note);
       resolved.push({ startLine: start.line, startHash: start.hash, endLine: end.line, endHash: end.hash, lines: edit.lines });
     } catch (error) {
-      mismatches.push(error instanceof Error ? error.message : String(error));
+      if (error instanceof AmbiguousAnchorError) {
+        const current = ambiguous.get(error.hash);
+        if (current) {
+          current.labels.push(error.label);
+        } else {
+          ambiguous.set(error.hash, { labels: [error.label], matches: error.matches });
+        }
+      } else {
+        mismatches.push(error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
+  for (const [hash, error] of ambiguous) {
+    mismatches.push(ambiguousAnchorMessage(lines, error.labels.join(", "), hash, error.matches));
+  }
+
   if (mismatches.length > 0) {
-    throw new Error(`stale anchor — file changed since last read; no edits were applied.\n\n${mismatches.join("\n\n")}`);
+    throw new Error(`anchor resolution failed; no edits were applied.\n\n${mismatches.join("\n\n")}`);
   }
 
   const ranges = resolved.map((edit) => [edit.startLine, edit.endLine] as const).sort((a, b) => a[0] - b[0]);

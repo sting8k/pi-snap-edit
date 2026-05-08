@@ -188,7 +188,7 @@ describe("quick edits", () => {
     const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
     const stale = editFor(["one", "OLD", "three"], 2, 2, ["TWO"]);
 
-    await assert.rejects(() => applyQuickEdits(file, [stale]), /stale anchor — file changed since last read; no edits were applied[\s\S]*Stale anchor .+: no current line has matching hash; no edits were applied\.[\s\S]*Current content near the start of the file:[\s\S]*\|two[\s\S]*Review the current content before retrying with a new anchor/);
+    await assert.rejects(() => applyQuickEdits(file, [stale]), /anchor resolution failed; no edits were applied[\s\S]*Stale anchor .+: no current line has matching hash[\s\S]*Read the file again/);
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
 
@@ -196,7 +196,7 @@ describe("quick edits", () => {
     const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
     const edit = editFor(["one", "two", "OLD"], 2, 3, ["TWO"]);
 
-    await assert.rejects(() => applyQuickEdits(file, [edit]), /stale anchor — file changed since last read; no edits were applied[\s\S]*Stale anchor .+: no current line has matching hash/);
+    await assert.rejects(() => applyQuickEdits(file, [edit]), /anchor resolution failed; no edits were applied[\s\S]*Stale anchor .+: no current line has matching hash[\s\S]*Read the file again/);
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
 
@@ -207,18 +207,75 @@ describe("quick edits", () => {
     const result = await applyQuickEdits(file, [editFor(original, 2, 2, ["TWO"])]);
 
     assert.equal(await readFile(file, "utf8"), "zero\none\nTWO\nthree\n");
-    assert.doesNotMatch(result, /stale anchor/);
+    assert.doesNotMatch(result, /[Ss]tale anchor/);
   });
 
-  it("rejects duplicate hash-only anchors as ambiguous", async () => {
+  it("rejects duplicate hash-only anchors as ambiguous and returns candidate contexts", async () => {
     const original = ["start", "dup", "dup", "end"];
     const file = await tempFile("sample.txt", original.join("\n"));
 
     await assert.rejects(
       () => applyQuickEdits(file, [{ start: lineHash("dup"), lines: ["DUP"] }]),
-      /ambiguous anchor/,
+      /ambiguous anchor[\s\S]*Candidate contexts:[\s\S]*@@ line 2[\s\S]*-----\|dup[\s\S]*@@ line 3/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("hides globally ambiguous neighbor hashes in candidate contexts", async () => {
+    const original = [
+      "shared signature",
+      "target",
+      "first unique",
+      "shared signature",
+      "target",
+      "second unique",
+    ];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: lineHash("target"), lines: ["TARGET"] }]),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /Candidate contexts:/);
+        assert.match(error.message, /-----\|shared signature/);
+        assert.doesNotMatch(error.message, new RegExp(`${lineHash("shared signature")}\\|shared signature`));
+        return true;
+      },
+    );
+  });
+
+  it("dedupes repeated ambiguous anchors in quick_edit batch errors", async () => {
+    const original = ["start", "dup", "dup", "end"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [
+        { start: anchorFor(original, 1), end: lineHash("dup"), lines: ["x"] },
+        { start: anchorFor(original, 4), end: lineHash("dup"), lines: ["y"] },
+      ]),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /edit\[0\] end, edit\[1\] end: ambiguous anchor/);
+        assert.equal(error.message.match(/Candidate contexts:/g)?.length, 1);
+        return true;
+      },
+    );
+    assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("omits candidate contexts for very broad ambiguous anchors", async () => {
+    const original = Array.from({ length: 11 }, () => "dup");
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: lineHash("dup"), lines: ["DUP"] }]),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /ambiguous anchor/);
+        assert.doesNotMatch(error.message, /Candidate contexts:/);
+        return true;
+      },
+    );
   });
 
   it("hides duplicate anchors in quick_edit diff output", async () => {
@@ -309,7 +366,7 @@ describe("quick edits", () => {
 
     await assert.rejects(
       () => applyQuickEdits(file, [{ start: lineHash("missing"), lines: ["x"] }]),
-      /stale anchor/,
+      /[Ss]tale anchor/,
     );
     await assert.rejects(
       () => applyQuickEdits(file, [{ start: anchorFor(original, 2), end: anchorFor(original, 1), lines: ["x"] }]),
@@ -343,13 +400,29 @@ describe("structured edits", () => {
     );
   });
 
-  it("rejects substitute count mismatches atomically", async () => {
+  it("rejects substitute count mismatches atomically with occurrence contexts", async () => {
     const original = ["alpha", "beta", "gamma"];
     const file = await tempFile("sample.txt", original.join("\n"));
 
     await assert.rejects(
       () => applyStructuredEdits(file, [{ type: "substitute", old: "beta", new: "BETA", count: 2 }]),
-      /op\[0\] substitute: substitute expected 2 occurrence/,
+      /op\[0\] substitute: substitute expected 2 occurrence[\s\S]*Occurrence contexts:[\s\S]*@@ occurrence 1 line 2[\s\S]*\|beta/,
+    );
+    assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("omits substitute occurrence contexts for broad mismatches", async () => {
+    const original = Array.from({ length: 11 }, () => "target");
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(
+      () => applyStructuredEdits(file, [{ type: "substitute", old: "target", new: "TARGET", count: 1 }]),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /substitute expected 1 occurrence/);
+        assert.doesNotMatch(error.message, /Occurrence contexts:/);
+        return true;
+      },
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
@@ -377,13 +450,13 @@ describe("structured edits", () => {
     assert.equal(await readFile(file, "utf8"), "zero\none\nTWO\nthree");
   });
 
-  it("rejects duplicate structured hash-only anchors as ambiguous", async () => {
+  it("rejects duplicate structured hash-only anchors as ambiguous and returns candidate contexts", async () => {
     const original = ["start", "dup", "dup", "end"];
     const file = await tempFile("sample.txt", original.join("\n"));
 
     await assert.rejects(
       () => applyStructuredEdits(file, [{ type: "replace_lines", start: lineHash("dup"), lines: ["DUP"] }]),
-      /ambiguous anchor/,
+      /ambiguous anchor[\s\S]*Candidate contexts:[\s\S]*@@ line 2[\s\S]*-----\|dup[\s\S]*@@ line 3/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
@@ -468,7 +541,7 @@ describe("structured edits", () => {
         [{ type: "substitute", old: "body", new: "BODY" }],
         { start: anchorFor(staleScopeLines, 2), end: anchorFor(original, 3) },
       ),
-      /stale anchor/,
+      /[Ss]tale anchor/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
@@ -480,7 +553,7 @@ describe("structured edits", () => {
 
     await assert.rejects(
       () => applyStructuredEdits(file, [{ type: "replace_lines", start: anchorFor(staleLines, 2), lines: ["TWO"] }]),
-      /op\[0\] replace_lines: stale anchor/,
+      /op\[0\] replace_lines: Stale anchor/,
     );
     await assert.rejects(
       () => applyStructuredEdits(file, [{ type: "insert_after", anchor: `${anchorFor(original, 2)}|two`, lines: ["x"] }]),
@@ -499,7 +572,7 @@ describe("structured edits", () => {
     );
     await assert.rejects(
       () => applyStructuredEdits(file, [{ type: "delete_lines", start: lineHash("") }]),
-      /stale anchor/,
+      /[Ss]tale anchor/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
@@ -524,7 +597,7 @@ describe("structured edits", () => {
 
     await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "", new: "x" }]), /old must not be empty/);
     await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "alpha", new: "alpha" }]), /must differ/);
-    await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "alpha", new: "a\nb" }]), /replace_lines/);
+    await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "alpha", new: "a\nb" }]), /single-line[\s\S]*replace_lines with nearby unique anchors/);
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
 

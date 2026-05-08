@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { formatHash, hashLines, invalidAnchorMessage, lineHash, parseAnchor } from "./anchors.js";
+import { formatAmbiguousAnchorCandidates, formatHash, formatOccurrenceContexts, hashLines, invalidAnchorMessage, lineHash, parseAnchor } from "./anchors.js";
 import { CONTEXT_LINES, formatContexts, formatDiffs, type ContextRange, type EditDiff } from "./diff.js";
 import type { AnchorRangeInput, StructuredEditOp } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
@@ -14,19 +14,15 @@ function resolveAnchorLine(lines: string[], anchorText: string, label: string): 
 
   if (matches.length === 1) return matches[0]!;
   if (matches.length > 1) {
+    const candidates = formatAmbiguousAnchorCandidates(lines, matches, anchor.hash);
     throw new Error(
       `ambiguous anchor ${formatHash(anchor.hash)} at ${label}: matched ${matches.length} current lines ` +
-        `(${matches.slice(0, 8).join(", ")}${matches.length > 8 ? ", ..." : ""})`,
+        `(${matches.slice(0, 8).join(", ")}${matches.length > 8 ? ", ..." : ""})` +
+        (candidates ? `\n\nCandidate contexts:\n${candidates}` : ""),
     );
   }
 
-  const index = 0;
-  const contextStart = Math.max(0, index - 2);
-  const contextEnd = Math.min(lines.length, index + 3);
-  throw new Error(
-    `stale anchor ${anchorText} at ${label}: no current line has matching hash:\n` +
-      hashLines(lines.slice(contextStart, contextEnd), contextStart + 1),
-  );
+  throw new Error(`Stale anchor ${anchorText} at ${label}: no current line has matching hash. Read the file again.`);
 }
 
 function validateAnchorRange(lines: string[], range: AnchorRangeInput, label: string): { startLine: number; endLine: number } {
@@ -101,10 +97,7 @@ export async function applyStructuredEdits(
   const applySubstitute = (op: Extract<StructuredEditOp, { type: "substitute" }>) => {
     if (op.old.length === 0) throw new Error("substitute old must not be empty");
     if (op.old.includes("\n") || op.old.includes("\r") || op.new.includes("\n") || op.new.includes("\r")) {
-      throw new Error(
-        "substitute old/new must be single-line. For multi-line changes use: " +
-          '{"type":"replace_lines","start":"ABCDE","end":"VWXYZ","lines":["..."]}',
-      );
+      throw new Error("substitute old/new must be single-line. Use replace_lines with nearby unique anchors.");
     }
     if (op.old === op.new) throw new Error("substitute old and new must differ");
 
@@ -112,14 +105,19 @@ export async function applyStructuredEdits(
     const currentStart = scopeRange ? adjustedLine(scopeRange.startLine) : 1;
     const currentEnd = scopeRange ? adjustedLine(scopeRange.endLine) : currentLines.length;
 
-    let actualCount = 0;
+    const occurrenceLines: number[] = [];
     for (let i = currentStart - 1; i < currentEnd; i++) {
-      actualCount += countSubstring(currentLines[i]!, op.old);
+      const occurrences = countSubstring(currentLines[i]!, op.old);
+      for (let j = 0; j < occurrences; j++) occurrenceLines.push(i + 1);
     }
+
+    const actualCount = occurrenceLines.length;
     if (actualCount !== expectedCount) {
+      const contexts = formatOccurrenceContexts(currentLines, occurrenceLines);
       throw new Error(
         `substitute expected ${expectedCount} occurrence(s) of ${JSON.stringify(op.old)} but found ${actualCount}` +
-          (scopeRange ? " in scope" : ""),
+          (scopeRange ? " in scope" : "") +
+          (contexts ? `\n\nOccurrence contexts:\n${contexts}` : ""),
       );
     }
 
