@@ -86,7 +86,7 @@ describe("hash helpers", () => {
 
 describe("quick-edit renderer helpers", () => {
   it("summarizes compact quick-edit diffs", () => {
-    const text = "── diff ──\n:2\n- ZOQGW|old\n+ CFIHU|new\n\nR3J7N|alpha";
+    const text = "── diff ──\n:2\n- old\n+ new\n\nR3J7N|alpha";
     assert.deepEqual(summarizeQuickEditOutput(text), { additions: 1, removals: 1, hasDiff: true });
   });
 
@@ -106,8 +106,8 @@ describe("quick edits", () => {
 
     assert.equal(await readFile(file, "utf8"), "one\nTWO\nthree\n");
     assert.match(result, /── diff ──/);
-    assert.match(result, /- .+\|two/);
-    assert.match(result, /\+ .+\|TWO/);
+    assert.match(result, /- two/);
+    assert.match(result, /\+ TWO/);
   });
 
   it("checks expectedStartLine before editing", async () => {
@@ -215,7 +215,7 @@ describe("quick edits", () => {
       { start: 1, end: 4, expectedStartLine: "before", lines: ["before", "dup changed", "dup", "after"] },
     ]);
 
-    assert.match(result, /- -----\|dup\n- -----\|dup/);
+    assert.match(result, /- dup\n- dup/);
     assert.equal(await readFile(file, "utf8"), "before\ndup changed\ndup\nafter");
   });
 
@@ -458,9 +458,9 @@ describe("structured edits", () => {
     const result = await applyStructuredEdits(file, [{ type: "insert_after", anchor: anchorFor(original, 2), lines: ["three", "four"] }]);
 
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\nfour");
-    assert.doesNotMatch(result, /- 2:.*\|two/);
-    assert.match(result, /\+ .+\|three/);
-    assert.match(result, /\+ .+\|four/);
+    assert.doesNotMatch(result, /- two/);
+    assert.match(result, /\+ three/);
+    assert.match(result, /\+ four/);
   });
 
   it("can substitute the current whole file after an earlier line operation", async () => {
