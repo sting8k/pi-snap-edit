@@ -24,7 +24,7 @@ function numberReadLines(text: string, options: HashReadTextOptions = {}): strin
   return numbered ? `${numbered}${suffix}` : suffix.trimStart();
 }
 
-export function hashReadText(text: string, fileHash: string, options: HashReadTextOptions = {}): string {
+export function numberReadText(text: string, options: HashReadTextOptions = {}): string {
   if (text.startsWith("Read image file ")) return text;
-  return `fileHash: ${fileHash}\n\n${numberReadLines(text, options)}`;
+  return numberReadLines(text, options);
 }

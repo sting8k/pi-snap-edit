@@ -9,6 +9,7 @@ import { color, renderQuickEditOutput, summarizeQuickEditOutput } from "./render
 import { QuickEditParams, StructuredEditParams, SubstituteEditParams } from "./schemas.js";
 import { applyStructuredEdits } from "./structured-edit.js";
 import { applySubstituteEdits } from "./substitute-edit.js";
+import { numberReadText } from "./read-hook.js";
 export { formatHash, hashLines, invalidAnchorMessage, lineHash, parseAnchor } from "./anchors.js";
 export { preferQuickEditTools } from "./active-tools.js";
 export { getFileStatSnapshot } from "./file-stat.js";
@@ -18,6 +19,7 @@ export { summarizeQuickEditOutput } from "./render.js";
 export { splitLines } from "./text.js";
 export { applyStructuredEdits } from "./structured-edit.js";
 export { applySubstituteEdits } from "./substitute-edit.js";
+export { numberReadText } from "./read-hook.js";
 
 const GUIDANCE_ERROR = "__piSnapEditGuidanceError";
 const STRUCTURED_OP_TYPES = ["substitute", "replace_lines", "delete_lines", "insert_before", "insert_after"] as const;
@@ -229,6 +231,23 @@ export default function (pi: ExtensionAPI) {
       if (!expanded || !text) return new Text(header, 0, 0);
       return new Text(`${header}\n${renderQuickEditOutput(theme, text)}`, 0, 0);
     },
+  });
+
+  pi.on("tool_result", async (event) => {
+    if (event.toolName !== "read" || event.isError) return;
+    if (event.content.some((part) => part.type === "image")) return;
+    if (!isRecord(event.input) || typeof event.input.path !== "string") return;
+
+    const absolutePath = resolvePath(process.cwd(), event.input.path);
+    const { lineCount } = await getFileStatSnapshot(absolutePath);
+    const startLine = typeof event.input.offset === "number" && Number.isFinite(event.input.offset)
+      ? Math.max(1, Math.floor(event.input.offset))
+      : 1;
+    return {
+      content: event.content.map((part) =>
+        part.type === "text" ? { ...part, text: numberReadText(part.text, { startLine, totalLineCount: lineCount }) } : part,
+      ),
+    };
   });
 
   pi.on("session_start", () => {
