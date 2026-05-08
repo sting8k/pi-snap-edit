@@ -48,7 +48,7 @@ pi -e ./src/index.ts
 
 ## Usage
 
-First read the file or relevant range; read output includes `fileHash` plus `1| ` line numbers:
+First read the file or relevant range; read output includes `fileHash` plus padded line numbers such as ` 98| ` and `100| `. Offset reads keep absolute file line numbers, not chunk-local numbers.
 
 ```json
 {
@@ -91,7 +91,7 @@ For literal substitutions inside a known range, use `substitute_edit`:
 
 Substitutions are literal, single-line, ordered, and counted. Use `quick_edit` for multi-line changes.
 
-Line numbers can come from Pi `read` (`1| ` prefixes), `rg -n`, `grep -n`, src maps, or any CLI output. EOF insert uses the virtual line immediately after the last line. If an edit reports a stale `fileHash`, read the current file/range again and retry with updated line numbers/hash.
+Line numbers can come from Pi `read` (`1| ` / `100| ` prefixes), `rg -n`, `grep -n`, src maps, or any CLI output. EOF insert uses the virtual line immediately after the last line. If an edit reports a stale `fileHash`, read the current file/range again and retry with updated line numbers/hash.
 
 ## Verification
 

@@ -113,10 +113,13 @@ export default function (pi: ExtensionAPI) {
     if (!isRecord(event.input) || typeof event.input.path !== "string") return;
 
     const absolutePath = resolvePath(process.cwd(), event.input.path);
-    const { fileHash } = await getFileStatSnapshot(absolutePath);
+    const { fileHash, lineCount } = await getFileStatSnapshot(absolutePath);
+    const startLine = typeof event.input.offset === "number" && Number.isFinite(event.input.offset)
+      ? Math.max(1, Math.floor(event.input.offset))
+      : 1;
     return {
       content: event.content.map((part) =>
-        part.type === "text" ? { ...part, text: hashReadText(part.text, fileHash) } : part,
+        part.type === "text" ? { ...part, text: hashReadText(part.text, fileHash, { startLine, totalLineCount: lineCount }) } : part,
       ),
     };
   });
