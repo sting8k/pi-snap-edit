@@ -30,19 +30,9 @@ function validateLineRange(lineCount: number, edit: Edit, label: string): Resolv
   return { startLine, endLine, lines: edit.lines, insert: false };
 }
 
-export async function applyQuickEdits(absolutePath: string, fileHash: string, edits: Edit[]): Promise<string> {
+export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Promise<string> {
   if (edits.length === 0) throw new Error("edits must contain at least one replacement");
 
-  const snapshot = await getFileStatSnapshot(absolutePath);
-  if (snapshot.fileHash !== fileHash) {
-    throw new Error(
-      [
-        "stale fileHash; no edits were applied.",
-        `expected: ${fileHash}`,
-        "Read the file again to get the current fileHash before retrying.",
-      ].join("\n"),
-    );
-  }
 
   const content = await fs.readFile(absolutePath, "utf8");
   const lines = splitLines(content);
@@ -50,9 +40,8 @@ export async function applyQuickEdits(absolutePath: string, fileHash: string, ed
 
   for (let index = 0; index < edits.length; index++) {
     const expectedStartLine = edits[index]!.expectedStartLine;
-    if (expectedStartLine === undefined) continue;
 
-    const actual = lines[resolved[index]!.startLine - 1];
+    const actual = lines[resolved[index]!.startLine - 1] ?? "";
     if (actual !== expectedStartLine) {
       throw new Error(
         [

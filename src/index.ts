@@ -130,22 +130,21 @@ export default function (pi: ExtensionAPI) {
     name: "quick_edit",
     label: "quick-edit",
     description:
-      "Edit a file by 1-indexed line number or inclusive line range. Requires fileHash from the latest read output to prevent stale line-number edits. Atomic: any invalid edit rejects the whole batch.",
-    promptSnippet: "Safely edit files by line number using read fileHash",
+      "Edit a file by 1-indexed line number or inclusive line range. Requires expectedStartLine for each edit to guard against stale line content. Atomic: any invalid edit rejects the whole batch.",
+    promptSnippet: "Edit files by line number with expectedStartLine guard",
     promptGuidelines: [
-      "Use fileHash from the latest read output for this file; do not guess line numbers from memory.",
-      "Use start/end as 1-indexed line numbers from read, rg -n, grep -n, or srcwalk output, but keep fileHash from read.",
+      "Use start/end as 1-indexed line numbers from read, rg -n, grep -n, or srcwalk output.",
+      "Always provide expectedStartLine with the exact current content of the start line to guard against stale edits.",
       `Omit end for a single-line replacement. Use lines: [] to delete a line or range. Use lines: [""] for one blank line.`,
       "Use start=lineCount+1 with no end to insert at EOF; for an empty file, start=1 inserts the first line.",
-      "Use expectedStartLine when you want an exact guard for the current start line only; it does not check the full range.",
+      "expectedStartLine only checks the start line; it does not verify the full range or detect line shifts from insertions/deletions above.",
       "Batch multiple independent ranges in one call; overlapping ranges are rejected atomically.",
-      "If quick_edit reports a stale fileHash, read the current file/range again before retrying.",
     ],
     parameters: QuickEditParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const absolutePath = resolvePath(ctx.cwd, params.path);
-      const text = await withFileMutationQueue(absolutePath, () => applyQuickEdits(absolutePath, params.fileHash, params.edits));
+      const text = await withFileMutationQueue(absolutePath, () => applyQuickEdits(absolutePath, params.edits));
       return { content: [{ type: "text" as const, text }], details: undefined };
     },
 
@@ -171,10 +170,9 @@ export default function (pi: ExtensionAPI) {
     name: "substitute_edit",
     label: "substitute-edit",
     description:
-      "Apply ordered literal substitutions inside a required 1-indexed line range. Requires fileHash from the latest read output. Atomic: any count mismatch rejects the whole batch.",
-    promptSnippet: "Safely substitute literal text inside a line range using read fileHash",
+      "Apply ordered literal substitutions inside a required 1-indexed line range. Atomic: any count mismatch rejects the whole batch.",
+    promptSnippet: "Substitute literal text inside a line range",
     promptGuidelines: [
-      "Use fileHash from the latest read output for this file; stale fileHash rejects the edit.",
       "Always provide a narrow start/end line range. substitute_edit never runs over the whole file implicitly.",
       "Use substitutions[] for ordered single-line literal replacements. No regex; use quick_edit for multi-line changes.",
       "Each substitution count is required and checked before that substitution is applied.",
@@ -185,7 +183,7 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const absolutePath = resolvePath(ctx.cwd, params.path);
       const text = await withFileMutationQueue(absolutePath, () =>
-        applySubstituteEdits(absolutePath, params.fileHash, params.start, params.end, params.substitutions),
+        applySubstituteEdits(absolutePath, params.start, params.end, params.substitutions),
       );
       return { content: [{ type: "text" as const, text }], details: undefined };
     },

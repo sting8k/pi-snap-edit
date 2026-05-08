@@ -28,23 +28,12 @@ function validateSubstitution(substitution: Substitution, index: number): void {
 
 export async function applySubstituteEdits(
   absolutePath: string,
-  fileHash: string,
   start: number,
   end: number,
   substitutions: Substitution[],
 ): Promise<string> {
   if (substitutions.length === 0) throw new Error("substitutions must contain at least one replacement");
 
-  const snapshot = await getFileStatSnapshot(absolutePath);
-  if (snapshot.fileHash !== fileHash) {
-    throw new Error(
-      [
-        "stale fileHash; no edits were applied.",
-        `expected: ${fileHash}`,
-        "Read the file again to get the current fileHash before retrying.",
-      ].join("\n"),
-    );
-  }
 
   const content = await fs.readFile(absolutePath, "utf8");
   const lines = splitLines(content);

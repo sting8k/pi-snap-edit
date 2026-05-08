@@ -6,22 +6,20 @@ export const FileStatParams = Type.Object({
 
 export const QuickEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
-  fileHash: Type.String({ description: "Required content file hash from read output. Prevents stale line-number edits." }),
   edits: Type.Array(
     Type.Object({
       start: Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF." }),
       end: Type.Optional(Type.Integer({ minimum: 1, description: "Optional 1-indexed inclusive end line number." })),
-      expectedStartLine: Type.Optional(Type.String({ description: "Optional exact guard for the current start line only. Does not check the full range." })),
+      expectedStartLine: Type.String({ description: "Required exact guard for the current start line. Does not check the full range." }),
       lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it." }),
     }),
-    { minItems: 1, description: "Line-number edits to apply atomically. Use start=lineCount+1 with no end to insert at EOF. fileHash is required." },
+    { minItems: 1, description: "Line-number edits to apply atomically. Use start=lineCount+1 with no end to insert at EOF." },
   ),
 });
 
 export const SubstituteEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
-  fileHash: Type.String({ description: "Required content file hash from read output. Prevents stale line-number substitutions." }),
-  start: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line. Required; substitute_edit never runs whole-file implicitly." }),
+  start: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line." }),
   end: Type.Integer({ minimum: 1, description: "1-indexed inclusive end line. Must be within the current file." }),
   substitutions: Type.Array(
     Type.Object({
@@ -95,6 +93,6 @@ export type Substitution = {
 export type Edit = {
   start: number;
   end?: number;
-  expectedStartLine?: string;
+  expectedStartLine: string;
   lines: string[];
 };

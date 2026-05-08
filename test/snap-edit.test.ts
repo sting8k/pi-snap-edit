@@ -16,7 +16,6 @@ import snapEditExtension, {
   splitLines,
   summarizeQuickEditOutput,
   preferQuickEditTools,
-  getFileStatSnapshot,
   hashFileContent,
   type Edit,
 } from "../src/index.js";
@@ -31,17 +30,15 @@ async function tempFile(name: string, content: string): Promise<string> {
   return file;
 }
 
-function editFor(_lines: string[], startLine: number, endLine: number, replacementLines: string[]): Edit {
+function editFor(lines: string[], startLine: number, endLine: number, replacementLines: string[]): Edit {
   return {
+    expectedStartLine: lines[startLine - 1] ?? "",
     start: startLine,
     end: endLine,
     lines: replacementLines,
   };
 }
 
-async function fileHashFor(file: string): Promise<string> {
-  return (await getFileStatSnapshot(file)).fileHash;
-}
 
 function anchorFor(lines: string[], line: number): string {
   return formatHash(lineHash(lines[line - 1] ?? ""));
@@ -142,7 +139,7 @@ describe("quick-edit renderer helpers", () => {
 describe("quick edits", () => {
   it("applies single-line replacement and preserves trailing LF", async () => {
     const file = await tempFile("sample.ts", "one\ntwo\nthree\n");
-    const result = await applyQuickEdits(file, await fileHashFor(file), [{ start: 2, lines: ["TWO"] }]);
+    const result = await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["TWO"] }]);
 
     assert.equal(await readFile(file, "utf8"), "one\nTWO\nthree\n");
     assert.match(result, /── diff ──/);
@@ -153,7 +150,7 @@ describe("quick edits", () => {
   it("checks expectedStartLine before editing", async () => {
     const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
 
-    await applyQuickEdits(file, await fileHashFor(file), [{ start: 2, expectedStartLine: "two", lines: ["TWO"] }]);
+    await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["TWO"] }]);
 
     assert.equal(await readFile(file, "utf8"), "one\nTWO\nthree\n");
   });
@@ -161,13 +158,13 @@ describe("quick edits", () => {
   it("rejects expectedStartLine mismatch atomically", async () => {
     const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
 
-    const fileHash = await fileHashFor(file);
     await assert.rejects(
-      () => applyQuickEdits(file, fileHash, [
-        { start: 1, lines: ["ONE"] },
+      () => applyQuickEdits(file, [
+        { start: 1, expectedStartLine: "one", lines: ["ONE"] },
+        { start: 1, expectedStartLine: "one", lines: ["ONE"] },
         { start: 2, expectedStartLine: "not two", lines: ["TWO"] },
       ]),
-      /edit\[1\] expectedStartLine mismatch at line 2; no edits were applied[\s\S]*expected: "not two"[\s\S]*actual: "two"/,
+      /edit\[2\] expectedStartLine mismatch at line 2; no edits were applied[\s\S]*expected: "not two"[\s\S]*actual: "two"/,
     );
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
@@ -176,7 +173,7 @@ describe("quick edits", () => {
     const original = ["a", "b", "c", "d", "e"];
     const file = await tempFile("sample.txt", `${original.join("\n")}\n`);
 
-    await applyQuickEdits(file, await fileHashFor(file), [
+    await applyQuickEdits(file, [
       editFor(original, 2, 3, ["B", "C", "CC"]),
       editFor(original, 5, 5, ["E"]),
     ]);
@@ -187,7 +184,7 @@ describe("quick edits", () => {
   it("deletes a line or range when lines is empty", async () => {
     const original = ["a", "b", "c", "d"];
     const file = await tempFile("sample.txt", original.join("\n"));
-    await applyQuickEdits(file, await fileHashFor(file), [editFor(original, 2, 3, [])]);
+    await applyQuickEdits(file, [editFor(original, 2, 3, [])]);
 
     assert.equal(await readFile(file, "utf8"), "a\nd");
   });
@@ -195,7 +192,7 @@ describe("quick edits", () => {
   it("replaces with a blank line when lines contains an empty string", async () => {
     const original = ["a", "b", "c"];
     const file = await tempFile("sample.txt", original.join("\n"));
-    await applyQuickEdits(file, await fileHashFor(file), [editFor(original, 2, 2, [""])]);
+    await applyQuickEdits(file, [editFor(original, 2, 2, [""])]);
 
     assert.equal(await readFile(file, "utf8"), "a\n\nc");
   });
@@ -203,28 +200,28 @@ describe("quick edits", () => {
   it("preserves CRLF and absence of trailing newline", async () => {
     const original = ["first", "second", "third"];
     const file = await tempFile("sample.txt", "first\r\nsecond\r\nthird");
-    await applyQuickEdits(file, await fileHashFor(file), [editFor(original, 2, 2, ["SECOND", "inserted"])]);
+    await applyQuickEdits(file, [editFor(original, 2, 2, ["SECOND", "inserted"])]);
 
     assert.equal(await readFile(file, "utf8"), "first\r\nSECOND\r\ninserted\r\nthird");
   });
 
   it("inserts at EOF with start equal to lineCount plus one", async () => {
     const file = await tempFile("sample.txt", "one\ntwo\n");
-    await applyQuickEdits(file, await fileHashFor(file), [{ start: 3, lines: ["three"] }]);
+    await applyQuickEdits(file, [{ start: 3, expectedStartLine: "", lines: ["three"] }]);
 
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
 
   it("inserts into an empty file with start line 1", async () => {
     const file = await tempFile("sample.txt", "");
-    await applyQuickEdits(file, await fileHashFor(file), [{ start: 1, lines: ["first"] }]);
+    await applyQuickEdits(file, [{ start: 1, expectedStartLine: "", lines: ["first"] }]);
 
     assert.equal(await readFile(file, "utf8"), "first");
   });
 
   it("deletes the only trailing-newline line into an empty file", async () => {
     const file = await tempFile("sample.txt", "only\n");
-    await applyQuickEdits(file, await fileHashFor(file), [{ start: 1, lines: [] }]);
+    await applyQuickEdits(file, [{ start: 1, expectedStartLine: "only", lines: [] }]);
 
     assert.equal(await readFile(file, "utf8"), "");
   });
@@ -232,40 +229,17 @@ describe("quick edits", () => {
   it("handles unicode content and replacements", async () => {
     const original = ["hello", "こんにちは", "bye"];
     const file = await tempFile("sample.txt", original.join("\n"));
-    await applyQuickEdits(file, await fileHashFor(file), [editFor(original, 2, 2, ["こんばんは"])]);
+    await applyQuickEdits(file, [editFor(original, 2, 2, ["こんばんは"])]);
 
     assert.equal(await readFile(file, "utf8"), "hello\nこんばんは\nbye");
   });
 
-  it("rejects stale fileHash atomically", async () => {
-    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
-    const staleHash = await fileHashFor(file);
-    await writeFile(file, "one\nchanged\nthree\n", "utf8");
-
-    await assert.rejects(
-      () => applyQuickEdits(file, staleHash, [{ start: 2, lines: ["TWO"] }]),
-      /stale fileHash; no edits were applied[\s\S]*expected:[\s\S]*Read the file again/,
-    );
-    assert.equal(await readFile(file, "utf8"), "one\nchanged\nthree\n");
-  });
-
-  it("rejects same-size content changes", async () => {
-    const file = await tempFile("sample.txt", "aaa\nbbb\nccc\n");
-    const staleHash = await fileHashFor(file);
-    await writeFile(file, "aaa\nxyz\nccc\n", "utf8");
-
-    await assert.rejects(
-      () => applyQuickEdits(file, staleHash, [{ start: 2, lines: ["BBB"] }]),
-      /stale fileHash; no edits were applied/,
-    );
-    assert.equal(await readFile(file, "utf8"), "aaa\nxyz\nccc\n");
-  });
 
   it("edits duplicate lines directly by line number", async () => {
     const original = ["start", "dup", "dup", "end"];
     const file = await tempFile("sample.txt", original.join("\n"));
 
-    await applyQuickEdits(file, await fileHashFor(file), [{ start: 3, lines: ["DUP"] }]);
+    await applyQuickEdits(file, [{ start: 3, expectedStartLine: "dup", lines: ["DUP"] }]);
 
     assert.equal(await readFile(file, "utf8"), "start\ndup\nDUP\nend");
   });
@@ -274,8 +248,8 @@ describe("quick edits", () => {
     const original = ["before", "dup", "dup", "after"];
     const file = await tempFile("sample.txt", original.join("\n"));
 
-    const result = await applyQuickEdits(file, await fileHashFor(file), [
-      { start: 1, end: 4, lines: ["before", "dup changed", "dup", "after"] },
+    const result = await applyQuickEdits(file, [
+      { start: 1, end: 4, expectedStartLine: "before", lines: ["before", "dup changed", "dup", "after"] },
     ]);
 
     assert.match(result, /- -----\|dup\n- -----\|dup/);
@@ -287,7 +261,7 @@ describe("quick edits", () => {
     const file = await tempFile("sample.txt", original.join("\n"));
 
     await assert.rejects(
-      async () => applyQuickEdits(file, await fileHashFor(file), [editFor(original, 1, 3, ["x"]), editFor(original, 3, 4, ["y"])]),
+      async () => applyQuickEdits(file, [editFor(original, 1, 3, ["x"]), editFor(original, 3, 4, ["y"])]),
       /overlapping edit ranges/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
@@ -298,11 +272,11 @@ describe("quick edits", () => {
     const file = await tempFile("sample.txt", original.join("\n"));
 
     await assert.rejects(
-      async () => applyQuickEdits(file, await fileHashFor(file), [{ start: 4, lines: ["x"] }]),
+      async () => applyQuickEdits(file, [{ start: 4, expectedStartLine: "", lines: ["x"] }]),
       /out of bounds/,
     );
     await assert.rejects(
-      async () => applyQuickEdits(file, await fileHashFor(file), [{ start: 2, end: 1, lines: ["x"] }]),
+      async () => applyQuickEdits(file, [{ start: 2, end: 1, expectedStartLine: "b", lines: ["x"] }]),
       /end < start/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
@@ -323,7 +297,7 @@ describe("substitute edits", () => {
       ].join("\n") + "\n",
     );
 
-    const result = await applySubstituteEdits(file, await fileHashFor(file), 4, 6, [
+    const result = await applySubstituteEdits(file, 4, 6, [
       { old: "logger.debug", new: "logger.trace", count: 1 },
       { old: "debugEnabled", new: "traceEnabled", count: 1 },
     ]);
@@ -347,49 +321,38 @@ describe("substitute edits", () => {
     const file = await tempFile("sample.txt", original);
 
     await assert.rejects(
-      async () => applySubstituteEdits(file, await fileHashFor(file), 1, 3, []),
+      async () => applySubstituteEdits(file, 1, 3, []),
       /substitutions must contain at least one replacement/,
     );
 
     await assert.rejects(
-      async () => applySubstituteEdits(file, await fileHashFor(file), 1, 3, [{ old: "two", new: "TWO", count: 1 }]),
+      async () => applySubstituteEdits(file, 1, 3, [{ old: "two", new: "TWO", count: 1 }]),
       /expected 1 occurrence\(s\).*found 2/,
     );
     assert.equal(await readFile(file, "utf8"), original);
   });
 
-  it("rejects stale fileHash atomically", async () => {
-    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
-    const staleHash = await fileHashFor(file);
-    await writeFile(file, "one\nTWO\nthree\n", "utf8");
-
-    await assert.rejects(
-      () => applySubstituteEdits(file, staleHash, 1, 3, [{ old: "two", new: "TWO", count: 1 }]),
-      /stale fileHash; no edits were applied/,
-    );
-    assert.equal(await readFile(file, "utf8"), "one\nTWO\nthree\n");
-  });
 
   it("rejects invalid ranges and multi-line substitutions", async () => {
     const file = await tempFile("sample.txt", "one\ntwo\n");
 
     await assert.rejects(
-      async () => applySubstituteEdits(file, await fileHashFor(file), 3, 3, [{ old: "x", new: "y", count: 1 }]),
+      async () => applySubstituteEdits(file, 3, 3, [{ old: "x", new: "y", count: 1 }]),
       /out of bounds/,
     );
     await assert.rejects(
-      async () => applySubstituteEdits(file, await fileHashFor(file), 1, 2, [{ old: "", new: "x", count: 1 }]),
+      async () => applySubstituteEdits(file, 1, 2, [{ old: "", new: "x", count: 1 }]),
       /old must not be empty/,
     );
     await assert.rejects(
-      async () => applySubstituteEdits(file, await fileHashFor(file), 1, 2, [{ old: "one", new: "ONE\nTWO", count: 1 }]),
+      async () => applySubstituteEdits(file, 1, 2, [{ old: "one", new: "ONE\nTWO", count: 1 }]),
       /single-line/,
     );
   });
 
   it("preserves CRLF and no-trailing-newline files", async () => {
     const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree");
-    await applySubstituteEdits(file, await fileHashFor(file), 2, 2, [{ old: "two", new: "TWO", count: 1 }]);
+    await applySubstituteEdits(file, 2, 2, [{ old: "two", new: "TWO", count: 1 }]);
 
     assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree");
   });

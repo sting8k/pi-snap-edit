@@ -12,7 +12,7 @@ Pain points from agent workflow:
 - For complex changes, agents often use ad-hoc Python scripts, which are harder to review.
 - Most search tools (`rg -n`, `grep -n`, src maps) naturally return line numbers, not custom anchors.
 
-`pi-snap-edit` uses a simpler model: edit by line number or counted literal substitutions, but require a content file hash so stale edits are rejected.
+`pi-snap-edit` uses a simpler model: edit by line number with required line content guards, or counted literal substitutions. More convenient than exact text replacement, but less safe against concurrent changes or duplicate lines.
 
 ## Why not hash-line anchors
 
@@ -20,12 +20,12 @@ Earlier versions used `<line>:<hash>|<content>` anchors. In practice, the first 
 
 ## Behavior
 
-- `read` output includes `fileHash` and padded line numbers; offset reads keep absolute file line numbers.
-- `quick_edit` performs atomic line/range replacements using 1-indexed line numbers.
-- `expectedStartLine` optionally guards the current `start` line only.
-- `substitute_edit` performs ordered, counted, literal single-line substitutions inside a required range.
+- `read` output includes `fileHash` (for agent state tracking) and padded line numbers; offset reads keep absolute file line numbers.
+- `quick_edit` performs atomic line/range replacements using 1-indexed line numbers; requires `expectedStartLine` for each edit.
+- `expectedStartLine` guards the current `start` line only; does not verify the full range or detect line shifts from insertions/deletions above.
+- `substitute_edit` performs ordered, counted, literal single-line substitutions inside a required range; no content guards.
 - Line endings are preserved, including CRLF and no-trailing-newline files.
-- Invalid ranges, count mismatches, overlapping edits, and stale hashes are rejected without partial writes.
+- Invalid ranges, count mismatches, overlapping edits, and `expectedStartLine` mismatches are rejected without partial writes.
 
 ## Install
 
