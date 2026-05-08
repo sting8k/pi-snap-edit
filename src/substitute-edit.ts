@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
-import { getFileStatSnapshot, hashFileContent } from "./file-stat.js";
+import { getFileStatSnapshot } from "./file-stat.js";
 import type { Substitution } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
@@ -83,6 +83,5 @@ export async function applySubstituteEdits(
   if (diff) parts.push(diff);
   const contexts = formatContexts(updated, contextRanges);
   if (contexts) parts.push(contexts);
-  parts.push(`fileHash: ${hashFileContent(newContent)}`);
   return parts.join("\n\n");
 }

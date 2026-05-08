@@ -20,7 +20,7 @@ Earlier versions used `<line>:<hash>|<content>` anchors. In practice, the first 
 
 ## Behavior
 
-- `read` output includes `fileHash` (for agent state tracking) and padded line numbers; offset reads keep absolute file line numbers.
+- `read` output includes padded line numbers; offset reads keep absolute file line numbers.
 - `quick_edit` performs atomic line/range replacements using 1-indexed line numbers; requires `expectedStartLine` for each edit.
 - `expectedStartLine` guards the current `start` line only; does not verify the full range or detect line shifts from insertions/deletions above.
 - `substitute_edit` performs ordered, counted, literal single-line substitutions inside a required range; no content guards.

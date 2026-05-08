@@ -10,13 +10,11 @@ import snapEditExtension, {
   formatHash,
   hashLines,
   invalidAnchorMessage,
-  hashReadText,
   lineHash,
   parseAnchor,
   splitLines,
   summarizeQuickEditOutput,
   preferQuickEditTools,
-  hashFileContent,
   type Edit,
 } from "../src/index.js";
 
@@ -85,41 +83,6 @@ describe("hash helpers", () => {
   });
 });
 
-describe("read result hashing hook", () => {
-  it("adds a fileHash header to plain core read text", () => {
-    assert.equal(hashReadText("alpha\nbeta", "abc123", { totalLineCount: 2 }), "fileHash: abc123\n\n1| alpha\n2| beta");
-  });
-
-  it("uses absolute offset line numbers and pads to the total line count width", () => {
-    assert.equal(
-      hashReadText("line 98\nline 99\nline 100", "abc123", { startLine: 98, totalLineCount: 100 }),
-      "fileHash: abc123\n\n 98| line 98\n 99| line 99\n100| line 100",
-    );
-  });
-
-  it("does not number a final newline as a phantom EOF line", () => {
-    assert.equal(hashReadText("alpha\nbeta\n", "abc123", { totalLineCount: 2 }), "fileHash: abc123\n\n1| alpha\n2| beta");
-  });
-
-  it("strips core continuation notices that only point at the phantom final newline", () => {
-    const text = "line 104\nline 105\n\n[1 more lines in file. Use offset=106 to continue.]";
-    assert.equal(hashReadText(text, "abc123", { startLine: 104, totalLineCount: 105 }), "fileHash: abc123\n\n104| line 104\n105| line 105");
-  });
-
-  it("preserves core read continuation notices with absolute line numbers", () => {
-    const text = "alpha\nbeta\n\n[Showing lines 5-6 of 20. Use offset=7 to continue.]";
-    assert.equal(hashReadText(text, "abc123", { startLine: 5, totalLineCount: 20 }), "fileHash: abc123\n\n 5| alpha\n 6| beta\n\n[Showing lines 5-6 of 20. Use offset=7 to continue.]");
-  });
-
-  it("does not alter image read notes", () => {
-    assert.equal(hashReadText("Read image file [image/png]", "abc123"), "Read image file [image/png]");
-  });
-
-  it("uses 6-character content hashes", () => {
-    assert.equal(hashFileContent("alpha").length, 6);
-    assert.equal(hashFileContent("alpha"), "8ed3f6");
-  });
-});
 
 describe("quick-edit renderer helpers", () => {
   it("summarizes compact quick-edit diffs", () => {

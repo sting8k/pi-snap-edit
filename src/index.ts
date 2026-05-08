@@ -3,18 +3,16 @@ import { keyHint, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import path from "node:path";
 import { preferQuickEditTools } from "./active-tools.js";
-import { getFileStatSnapshot, hashFileContent } from "./file-stat.js";
+import { getFileStatSnapshot } from "./file-stat.js";
 import { applyQuickEdits } from "./quick-edit.js";
-import { hashReadText } from "./read-hook.js";
 import { color, renderQuickEditOutput, summarizeQuickEditOutput } from "./render.js";
 import { QuickEditParams, StructuredEditParams, SubstituteEditParams } from "./schemas.js";
 import { applyStructuredEdits } from "./structured-edit.js";
 import { applySubstituteEdits } from "./substitute-edit.js";
 export { formatHash, hashLines, invalidAnchorMessage, lineHash, parseAnchor } from "./anchors.js";
 export { preferQuickEditTools } from "./active-tools.js";
-export { getFileStatSnapshot, hashFileContent } from "./file-stat.js";
+export { getFileStatSnapshot } from "./file-stat.js";
 export { applyQuickEdits } from "./quick-edit.js";
-export { hashReadText } from "./read-hook.js";
 export type { Edit, StructuredEditOp, Substitution } from "./schemas.js";
 export { summarizeQuickEditOutput } from "./render.js";
 export { splitLines } from "./text.js";
@@ -107,22 +105,6 @@ function prepareStructuredEditArguments(input: unknown): any {
 }
 
 export default function (pi: ExtensionAPI) {
-  pi.on("tool_result", async (event) => {
-    if (event.toolName !== "read" || event.isError) return;
-    if (event.content.some((part) => part.type === "image")) return;
-    if (!isRecord(event.input) || typeof event.input.path !== "string") return;
-
-    const absolutePath = resolvePath(process.cwd(), event.input.path);
-    const { fileHash, lineCount } = await getFileStatSnapshot(absolutePath);
-    const startLine = typeof event.input.offset === "number" && Number.isFinite(event.input.offset)
-      ? Math.max(1, Math.floor(event.input.offset))
-      : 1;
-    return {
-      content: event.content.map((part) =>
-        part.type === "text" ? { ...part, text: hashReadText(part.text, fileHash, { startLine, totalLineCount: lineCount }) } : part,
-      ),
-    };
-  });
 
 
 
