@@ -33,7 +33,7 @@ function ambiguousAnchorMessage(lines: string[], label: string, hash: string, ma
   );
 }
 
-function resolveAnchorLine(lines: string[], anchorText: string, label: string): { line: number; hash: string; note?: string } {
+function resolveAnchorLine(lines: string[], anchorText: string, label: string, occurrence?: number): { line: number; hash: string; note?: string } {
   const anchor = parseAnchor(anchorText);
   if (!anchor) throw new Error(`${label}: invalid anchor '${anchorText}'. Expected '<hash>', e.g. 'ABCDE'.`);
 
@@ -48,6 +48,12 @@ function resolveAnchorLine(lines: string[], anchorText: string, label: string): 
   }
 
   if (matches.length > 1) {
+    if (occurrence !== undefined) {
+      if (occurrence < 1 || occurrence > matches.length) {
+        throw new Error(`${label}: occurrence ${occurrence} out of range (1-${matches.length})`);
+      }
+      return { line: matches[occurrence - 1]!, hash: anchor.hash };
+    }
     throw new AmbiguousAnchorError(anchor.hash, matches, label, ambiguousAnchorMessage(lines, label, anchor.hash, matches));
   }
 
@@ -66,8 +72,8 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
 
   for (const [index, edit] of edits.entries()) {
     try {
-      const start = resolveAnchorLine(lines, edit.start, `edit[${index}] start`);
-      const end = edit.end === undefined ? start : resolveAnchorLine(lines, edit.end, `edit[${index}] end`);
+      const start = resolveAnchorLine(lines, edit.start, `edit[${index}] start`, edit.occurrence);
+      const end = edit.end === undefined ? start : resolveAnchorLine(lines, edit.end, `edit[${index}] end`, edit.occurrence);
       if (end.line < start.line) throw new Error(`Invalid range: ${start.line}-${end.line} (end < start)`);
       if (start.note) resolveNotes.push(start.note);
       if (end.note) resolveNotes.push(end.note);

@@ -58,7 +58,7 @@ function formatLineContexts(lines: string[], lineNumbers: number[], hiddenHashes
 }
 
 export function formatAmbiguousAnchorCandidates(lines: string[], matches: number[], hash: string): string {
-  return formatLineContexts(lines, matches, hiddenHashesFor(lines, [hash]), (_i, lineNo) => `@@ line ${lineNo}`);
+  return formatLineContexts(lines, matches, hiddenHashesFor(lines), (_i, lineNo) => `@@ occurrence ${_i + 1} line ${lineNo} — hash: ${hash}`);
 }
 
 export function formatOccurrenceContexts(lines: string[], occurrenceLines: number[]): string {

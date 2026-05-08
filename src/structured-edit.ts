@@ -4,7 +4,7 @@ import { CONTEXT_LINES, formatContexts, formatDiffs, type ContextRange, type Edi
 import type { AnchorRangeInput, StructuredEditOp } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
-function resolveAnchorLine(lines: string[], anchorText: string, label: string): number {
+function resolveAnchorLine(lines: string[], anchorText: string, label: string, occurrence?: number): number {
   const anchor = parseAnchor(anchorText);
   if (!anchor) throw new Error(`${label}: ${invalidAnchorMessage(anchorText)}`);
   const matches: number[] = [];
@@ -14,6 +14,12 @@ function resolveAnchorLine(lines: string[], anchorText: string, label: string): 
 
   if (matches.length === 1) return matches[0]!;
   if (matches.length > 1) {
+    if (occurrence !== undefined) {
+      if (occurrence < 1 || occurrence > matches.length) {
+        throw new Error(`${label}: occurrence ${occurrence} out of range (1-${matches.length})`);
+      }
+      return matches[occurrence - 1]!;
+    }
     const candidates = formatAmbiguousAnchorCandidates(lines, matches, anchor.hash);
     throw new Error(
       `ambiguous anchor ${formatHash(anchor.hash)} at ${label}: matched ${matches.length} current lines ` +
@@ -25,9 +31,9 @@ function resolveAnchorLine(lines: string[], anchorText: string, label: string): 
   throw new Error(`Stale anchor ${anchorText} at ${label}: no current line has matching hash. Read the file again.`);
 }
 
-function validateAnchorRange(lines: string[], range: AnchorRangeInput, label: string): { startLine: number; endLine: number } {
-  const startLine = resolveAnchorLine(lines, range.start, `${label} start`);
-  const endLine = range.end ? resolveAnchorLine(lines, range.end, `${label} end`) : startLine;
+function validateAnchorRange(lines: string[], range: AnchorRangeInput, label: string, occurrence?: number): { startLine: number; endLine: number } {
+  const startLine = resolveAnchorLine(lines, range.start, `${label} start`, occurrence);
+  const endLine = range.end ? resolveAnchorLine(lines, range.end, `${label} end`, occurrence) : startLine;
   if (endLine < startLine) {
     throw new Error(`Invalid ${label} range: ${startLine}-${endLine} (end < start)`);
   }
@@ -66,8 +72,8 @@ export async function applyStructuredEdits(
     return adjusted;
   };
 
-  const applyLineReplacement = (range: AnchorRangeInput, newLines: string[], label: string) => {
-    const { startLine, endLine } = validateAnchorRange(originalLines, range, label);
+  const applyLineReplacement = (range: AnchorRangeInput, newLines: string[], label: string, occurrence?: number) => {
+    const { startLine, endLine } = validateAnchorRange(originalLines, range, label, occurrence);
     const currentStart = adjustedLine(startLine);
     const currentEnd = adjustedLine(endLine);
     const oldLines = currentLines.slice(currentStart - 1, currentEnd);
@@ -76,8 +82,8 @@ export async function applyStructuredEdits(
     appliedLineEdits.push({ startLine, endLine, delta: newLines.length - (endLine - startLine + 1) });
   };
 
-  const applyInsert = (anchorText: string, insertedLines: string[], after: boolean, label: string) => {
-    const lineNo = resolveAnchorLine(originalLines, anchorText, label);
+  const applyInsert = (anchorText: string, insertedLines: string[], after: boolean, label: string, occurrence?: number) => {
+    const lineNo = resolveAnchorLine(originalLines, anchorText, label, occurrence);
     const currentLine = adjustedLine(lineNo);
     const insertIndex = after ? currentLine : currentLine - 1;
     currentLines.splice(insertIndex, 0, ...insertedLines);
@@ -138,16 +144,16 @@ export async function applyStructuredEdits(
           applySubstitute(op);
           break;
         case "replace_lines":
-          applyLineReplacement(op.end ? { start: op.start, end: op.end } : { start: op.start }, op.lines, "replace_lines");
+          applyLineReplacement(op.end ? { start: op.start, end: op.end } : { start: op.start }, op.lines, "replace_lines", op.occurrence);
           break;
         case "delete_lines":
-          applyLineReplacement(op.end ? { start: op.start, end: op.end } : { start: op.start }, [], "delete_lines");
+          applyLineReplacement(op.end ? { start: op.start, end: op.end } : { start: op.start }, [], "delete_lines", op.occurrence);
           break;
         case "insert_before":
-          applyInsert(op.anchor, op.lines, false, "insert_before");
+          applyInsert(op.anchor, op.lines, false, "insert_before", op.occurrence);
           break;
         case "insert_after":
-          applyInsert(op.anchor, op.lines, true, "insert_after");
+          applyInsert(op.anchor, op.lines, true, "insert_after", op.occurrence);
           break;
       }
     } catch (error) {

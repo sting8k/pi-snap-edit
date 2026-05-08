@@ -216,7 +216,7 @@ describe("quick edits", () => {
 
     await assert.rejects(
       () => applyQuickEdits(file, [{ start: lineHash("dup"), lines: ["DUP"] }]),
-      /ambiguous anchor[\s\S]*Candidate contexts:[\s\S]*@@ line 2[\s\S]*-----\|dup[\s\S]*@@ line 3/,
+      /ambiguous anchor[\s\S]*Candidate contexts:[\s\S]*@@ occurrence 1 line 2[\s\S]*-----\|dup[\s\S]*@@ occurrence 2 line 3/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
@@ -456,7 +456,7 @@ describe("structured edits", () => {
 
     await assert.rejects(
       () => applyStructuredEdits(file, [{ type: "replace_lines", start: lineHash("dup"), lines: ["DUP"] }]),
-      /ambiguous anchor[\s\S]*Candidate contexts:[\s\S]*@@ line 2[\s\S]*-----\|dup[\s\S]*@@ line 3/,
+      /ambiguous anchor[\s\S]*Candidate contexts:[\s\S]*@@ occurrence 1 line 2[\s\S]*-----\|dup[\s\S]*@@ occurrence 2 line 3/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
   });
@@ -672,3 +672,57 @@ describe("structured edits", () => {
     assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree");
   });
 });
+
+  it("selects specific occurrence when occurrence parameter is provided", async () => {
+    const original = ["start", "dup", "middle", "dup", "end"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await applyQuickEdits(file, [{ start: lineHash("dup"), occurrence: 2, lines: ["SECOND"] }]);
+    assert.equal(await readFile(file, "utf8"), "start\ndup\nmiddle\nSECOND\nend");
+  });
+
+  it("rejects out-of-range occurrence", async () => {
+    const original = ["start", "dup", "dup", "end"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: lineHash("dup"), occurrence: 3, lines: ["X"] }]),
+      /occurrence 3 out of range \(1-2\)/,
+    );
+    assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
+
+  it("selects occurrence 1 when specified explicitly", async () => {
+    const original = ["start", "dup", "middle", "dup", "end"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await applyQuickEdits(file, [{ start: lineHash("dup"), occurrence: 1, lines: ["FIRST"] }]);
+    assert.equal(await readFile(file, "utf8"), "start\nFIRST\nmiddle\ndup\nend");
+  });
+
+  it("selects specific occurrence with structured_edit replace_lines", async () => {
+    const original = ["start", "dup", "middle", "dup", "end"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await applyStructuredEdits(file, [{ type: "replace_lines", start: lineHash("dup"), occurrence: 2, lines: ["SECOND"] }]);
+    assert.equal(await readFile(file, "utf8"), "start\ndup\nmiddle\nSECOND\nend");
+  });
+
+  it("selects specific occurrence with structured_edit insert_before", async () => {
+    const original = ["start", "dup", "middle", "dup", "end"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await applyStructuredEdits(file, [{ type: "insert_before", anchor: lineHash("dup"), occurrence: 2, lines: ["BEFORE_SECOND"] }]);
+    assert.equal(await readFile(file, "utf8"), "start\ndup\nmiddle\nBEFORE_SECOND\ndup\nend");
+  });
+
+  it("rejects out-of-range occurrence in structured_edit", async () => {
+    const original = ["start", "dup", "dup", "end"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(
+      () => applyStructuredEdits(file, [{ type: "delete_lines", start: lineHash("dup"), occurrence: 5 }]),
+      /occurrence 5 out of range \(1-2\)/,
+    );
+    assert.equal(await readFile(file, "utf8"), original.join("\n"));
+  });
