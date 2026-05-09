@@ -9,15 +9,16 @@ Core behavior:
 - Hook Pi `read` results and add padded line numbers.
 - Provide `quick_edit` for atomic line/range replacements guarded by `expectedStartLine`.
 - Provide `substitute_edit` for counted literal substitutions inside explicit line ranges.
-- Reject stale guards, invalid ranges, failed substitutions, and failed batches without partial writes.
+- Provide `target_edit` for exact target text `replace`/`insert`/`delete` with occurrence/count guards.
+- Reject stale guards, invalid ranges, failed substitutions, target misses, and failed batches without partial writes.
 - Preserve line endings, including CRLF and no-trailing-newline files.
 
 The package is experimental. Keep changes small, explicit, and well-tested.
 
 ## Development rules
 
-- Keep callable tool names stable: `quick_edit` and `substitute_edit`.
-- Do not reintroduce the built-in `edit` tool preference; the extension should prefer `quick_edit` and `substitute_edit`.
+- Keep callable tool names stable: `quick_edit`, `substitute_edit`, and `target_edit`.
+- Do not reintroduce the built-in `edit` tool preference; the extension should prefer `quick_edit`, `substitute_edit`, and `target_edit`.
 - Do not add config, slash commands, widgets, MCP, or external editor/script dependencies unless explicitly requested.
 - Avoid broad refactors. Touch only files needed for the task.
 - Preserve existing style and TypeScript strictness.
@@ -46,6 +47,7 @@ npm run typecheck && npm test && git diff --check
 - `src/schemas.ts`: TypeBox schemas and edit operation types.
 - `src/quick-edit.ts`: `quick_edit` engine.
 - `src/substitute-edit.ts`: `substitute_edit` engine.
+- `src/target-edit.ts`: `target_edit` engine.
 - `src/read-hook.ts`: `read` result line-numbering hook.
 - `src/render.ts`: TUI render helpers.
 - `src/active-tools.ts`: active tool preference helper.
@@ -60,6 +62,7 @@ Cover these cases when changing edit behavior:
 - overlapping/reversed/out-of-bounds ranges
 - counted substitutions and count mismatch
 - insert/delete/replace line operations through `quick_edit`
+- exact target replace/insert/delete operations through `target_edit`
 - CRLF and no-trailing-newline preservation
 - escape-heavy strings when relevant
 
@@ -69,7 +72,7 @@ Suggested live-test flow:
 
 1. Create fixtures under `tmp/live-*` for realistic files: TypeScript, JSON, CRLF text, EOF append, and atomic-failure cases.
 2. Use Pi `read` to get real padded line numbers from those fixtures.
-3. Exercise actual `quick_edit` and `substitute_edit` tools, not only exported engine functions.
+3. Exercise actual `quick_edit`, `substitute_edit`, and `target_edit` tools, not only exported engine functions.
 4. Include at least one escape-heavy case with quotes, backslashes, regex, template literals, `$`, and unicode.
 5. Include negative checks: stale `expectedStartLine` rejection and a later failing operation after an earlier valid in-memory change.
 6. Verify exact file contents with a script, including JSON parse checks and CRLF/no-trailing-newline bytes.

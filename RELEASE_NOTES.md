@@ -1,3 +1,31 @@
+## pi-snap-edit v2.1.0
+
+Feature release. Adds `target_edit` for exact-target edits when agents know stable marker text but line numbers are inconvenient.
+
+### Changes
+
+- Added `target_edit` callable tool with three operations: `replace`, `insert`, and `delete`.
+- Added occurrence/count guards and optional line scope for exact target matching.
+- `target_edit` preserves line endings, supports multi-line targets/replacements, and returns diff plus line-numbered refreshed context.
+- Rebases target edit diff/context positions after later line-shifting operations in the same batch.
+- Added tests and docs for target-based editing, atomic failures, CRLF/no-trailing-newline preservation, and batch line-shift output.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (30 tests).
+- `git diff --check` passed.
+- `npm pack --dry-run` passed.
+- Live Pi tool tests passed after reload.
+
+---
+
 ## pi-snap-edit v2.0.0
 
 Breaking cleanup release. Removes the hash-anchored `structured_edit` workflow and standardizes the active workflow around line-numbered `quick_edit` plus `substitute_edit`.

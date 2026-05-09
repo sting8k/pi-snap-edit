@@ -6,6 +6,7 @@ import path from "node:path";
 import snapEditExtension, {
   applyQuickEdits,
   applySubstituteEdits,
+  applyTargetEdits,
   splitLines,
   summarizeQuickEditOutput,
   preferQuickEditTools,
@@ -57,8 +58,8 @@ describe("quick-edit renderer helpers", () => {
     assert.deepEqual(summarizeQuickEditOutput("1| alpha"), { additions: 0, removals: 0, hasDiff: false });
   });
   it("prefers quick_edit by removing built-in edit from active tools", () => {
-    assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit", "substitute_edit"]);
-    assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "edit"]), ["read", "quick_edit", "substitute_edit"]);
+    assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit", "substitute_edit", "target_edit"]);
+    assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "edit"]), ["read", "quick_edit", "substitute_edit", "target_edit"]);
   });
 });
 
@@ -283,4 +284,103 @@ describe("substitute edits", () => {
 
     assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree");
   });
+});
+
+describe("target edits", () => {
+  it("replaces exact target text by occurrence and returns numbered context", async () => {
+    const file = await tempFile("sample.ts", "const app = createApp();\napp.mount('#app');\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "app.mount('#app')", occurrence: 1, replacement: "app.mount('#root')" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "const app = createApp();\napp.mount('#root');\n");
+    assert.match(result, /── diff ──/);
+    assert.match(result, /- app\.mount\('#app'\);/);
+    assert.match(result, /\+ app\.mount\('#root'\);/);
+    assert.match(result, /1\| const app = createApp\(\);\n2\| app\.mount\('#root'\);/);
+  });
+
+  it("inserts full lines before or after the line containing the target", async () => {
+    const file = await tempFile("sample.ts", "const app = createApp();\napp.mount('#app');\n");
+    await applyTargetEdits(file, [
+      { type: "insert", target: "const app = createApp();", occurrence: 1, position: "after", lines: ["app.use(logger);"] },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "const app = createApp();\napp.use(logger);\napp.mount('#app');\n");
+  });
+
+  it("deletes multi-line target text", async () => {
+    const original = [
+      "before",
+      "if (debug) {",
+      "  console.log(value);",
+      "}",
+      "after",
+    ].join("\n");
+    const file = await tempFile("sample.ts", original);
+
+    await applyTargetEdits(file, [
+      { type: "delete", target: "if (debug) {\n  console.log(value);\n}\n", occurrence: 1 },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "before\nafter");
+  });
+
+  it("uses scope and count to edit repeated targets safely", async () => {
+    const file = await tempFile("sample.ts", "one();\ntarget();\ntwo();\ntarget();\n");
+    await applyTargetEdits(
+      file,
+      [{ type: "replace", target: "target()", count: 1, replacement: "selected()" }],
+      { startLine: 3, endLine: 4 },
+    );
+
+    assert.equal(await readFile(file, "utf8"), "one();\ntarget();\ntwo();\nselected();\n");
+  });
+
+  it("rejects selector/count failures atomically", async () => {
+    const original = "alpha\nbeta\ngamma\n";
+    const file = await tempFile("sample.txt", original);
+
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "alpha", occurrence: 1, replacement: "ALPHA" },
+        { type: "replace", target: "missing", occurrence: 1, replacement: "MISSING" },
+      ]),
+      /op\[1\] expected occurrence 1/,
+    );
+    assert.equal(await readFile(file, "utf8"), original);
+  });
+
+  it("preserves CRLF and no-trailing-newline files", async () => {
+    const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree");
+    await applyTargetEdits(file, [
+      { type: "insert", target: "two", occurrence: 1, position: "after", lines: ["TWO-AND-A-HALF"] },
+      { type: "replace", target: "three", occurrence: 1, replacement: "THREE" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "one\r\ntwo\r\nTWO-AND-A-HALF\r\nTHREE");
+  });
+  it("reports earlier changes at final line positions after later line-shifting ops", async () => {
+    const original = Array.from({ length: 12 }, (_, index) => `line${index + 1}`);
+    const file = await tempFile("sample.txt", `${original.join("\n")}\n`);
+
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "line10", occurrence: 1, replacement: "LINE10" },
+      {
+        type: "insert",
+        target: "line1",
+        occurrence: 1,
+        position: "before",
+        lines: Array.from({ length: 10 }, (_, index) => `inserted-${index + 1}`),
+      },
+    ]);
+
+    assert.equal(
+      await readFile(file, "utf8"),
+      [...Array.from({ length: 10 }, (_, index) => `inserted-${index + 1}`), ...original.slice(0, 9), "LINE10", ...original.slice(10)].join("\n") + "\n",
+    );
+    assert.match(result, /:20\n- line10\n\+ LINE10/);
+    assert.match(result, /20\| LINE10/);
+  });
+
 });

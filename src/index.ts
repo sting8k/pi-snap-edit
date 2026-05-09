@@ -6,18 +6,20 @@ import { preferQuickEditTools } from "./active-tools.js";
 import { getFileStatSnapshot } from "./file-stat.js";
 import { applyQuickEdits } from "./quick-edit.js";
 import { color, renderQuickEditOutput, summarizeQuickEditOutput } from "./render.js";
-import { QuickEditParams, SubstituteEditParams } from "./schemas.js";
+import { QuickEditParams, SubstituteEditParams, TargetEditParams } from "./schemas.js";
 import { applySubstituteEdits } from "./substitute-edit.js";
 import { numberReadText } from "./read-hook.js";
+import { applyTargetEdits } from "./target-edit.js";
 export { formatHash, hashLines, lineHash } from "./anchors.js";
 export { preferQuickEditTools } from "./active-tools.js";
 export { getFileStatSnapshot } from "./file-stat.js";
 export { applyQuickEdits } from "./quick-edit.js";
-export type { Edit, Substitution } from "./schemas.js";
+export type { Edit, Substitution, TargetEditOp, TargetEditScopeInput } from "./schemas.js";
 export { summarizeQuickEditOutput } from "./render.js";
 export { splitLines } from "./text.js";
 export { applySubstituteEdits } from "./substitute-edit.js";
 export { numberReadText } from "./read-hook.js";
+export { applyTargetEdits } from "./target-edit.js";
 
 
 function resolvePath(cwd: string, inputPath: string): string {
@@ -110,6 +112,46 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+
+  pi.registerTool({
+    name: "target_edit",
+    label: "target-edit",
+    description:
+      "Edit by finding exact target text, then replace it, delete it, or insert full lines before/after the line(s) containing it. Atomic: any invalid operation rejects the whole batch.",
+    promptSnippet: "Edit by exact target text with occurrence/count guards",
+    promptGuidelines: [
+      "Use target_edit when you know an exact marker/text but line numbers are inconvenient.",
+      "Use exact literal target text only; no regex. Use \\n for multi-line targets and replacements.",
+      "Every op must provide exactly one selector: occurrence for the Nth match, or count for exactly N matches.",
+      "Use replace for inline or multi-line text replacement, delete for exact target removal, and insert for adding full lines before/after the line(s) containing target.",
+      "Use optional scope.startLine/endLine to constrain matching when the file has repeated text.",
+      "Batch operations are ordered in memory and written atomically only after all operations validate.",
+    ],
+    parameters: TargetEditParams,
+
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const absolutePath = resolvePath(ctx.cwd, params.path);
+      const text = await withFileMutationQueue(absolutePath, () => applyTargetEdits(absolutePath, params.ops, params.scope));
+      return { content: [{ type: "text" as const, text }], details: undefined };
+    },
+
+    renderResult(result, { expanded, isPartial }, theme) {
+      if (isPartial) return new Text(`${color(theme, "dim", "↳")} ${color(theme, "muted", "applying target-edit...")}`, 0, 0);
+
+      const text = result.content?.filter((c) => c.type === "text").map((c) => c.text).join("\n") ?? "";
+      if ((result as any).isError) return new Text(color(theme, "error", text.trim() || "target-edit failed"), 0, 0);
+
+      const summary = summarizeQuickEditOutput(text);
+      const stats = summary.hasDiff
+        ? ` ${color(theme, "success", `+${summary.additions}`)} ${color(theme, "error", `-${summary.removals}`)}`
+        : "";
+      const hint = !expanded && text ? ` ${color(theme, "muted", `(${keyHint("app.tools.expand", "to expand")})`)}` : "";
+      const header = `${color(theme, "dim", "↳")} ${color(theme, "success", "target-edit applied")}${stats}${hint}`;
+
+      if (!expanded || !text) return new Text(header, 0, 0);
+      return new Text(`${header}\n${renderQuickEditOutput(theme, text)}`, 0, 0);
+    },
+  });
 
   pi.on("tool_result", async (event) => {
     if (event.toolName !== "read" || event.isError) return;
