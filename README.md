@@ -29,7 +29,7 @@ Earlier versions used `<line>:<hash>|<content>` anchors. In practice, the first 
 | Escape-heavy text (quotes, backslashes, regex, templates) | Can get noisy because old/new text must be escaped | Easier: replace whole lines or use counted literal substitutions |
 | Output from `rg -n` / `grep -n` | Usually needs another read or exact old text | Directly usable with line numbers and `expectedStartLine` |
 | Concurrent file changes | Exact old text must still match | Guarded at the start line: `expectedStartLine` checks the current `start` line |
-| Duplicate/repeated blocks | Exact text can be more precise | Use line numbers, or `structured_edit` with `occurrence` when an anchor matches more than once |
+| Duplicate/repeated blocks | Exact text can be more precise | Use explicit line numbers plus `expectedStartLine` |
 | Reviewability | Shows exact replacement intent | Avoids ad-hoc scripts; tool output shows diff + refreshed context |
 
 Tool behavior:
