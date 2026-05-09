@@ -5,13 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import snapEditExtension, {
   applyQuickEdits,
-  applyStructuredEdits,
   applySubstituteEdits,
-  formatHash,
-  hashLines,
-  invalidAnchorMessage,
-  lineHash,
-  parseAnchor,
   splitLines,
   summarizeQuickEditOutput,
   preferQuickEditTools,
@@ -38,43 +32,12 @@ function editFor(lines: string[], startLine: number, endLine: number, replacemen
 }
 
 
-function anchorFor(lines: string[], line: number): string {
-  return formatHash(lineHash(lines[line - 1] ?? ""));
-}
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe("hash helpers", () => {
-  it("formats deterministic 5-character base32 hashes", () => {
-    assert.equal(formatHash(lineHash("")), "4OYMI");
-    assert.equal(formatHash(lineHash("alpha")), "R3J7N");
-    assert.equal(formatHash(lineHash("こんにちは")), "CJNOV");
-  });
-
-    it("hashes lines and hides duplicate anchors in displayed context", () => {
-      assert.equal(hashLines(["alpha", "", "beta"], 41), "R3J7N|alpha\n4OYMI|\n6RHGJ|beta");
-      assert.equal(hashLines(["dup", "unique", "dup"], 1), "-----|dup\nYJZAI|unique\n-----|dup");
-    });
-
-  it("parses valid anchors and rejects malformed anchors", () => {
-    assert.deepEqual(parseAnchor("R3J7N"), { hash: "R3J7N" });
-    assert.equal(parseAnchor(" 42 : R3J7N "), undefined);
-    assert.equal(parseAnchor("0:R3J7N"), undefined);
-    assert.equal(parseAnchor("42"), undefined);
-    assert.equal(parseAnchor("42:R3J7N:extra"), undefined);
-    assert.equal(parseAnchor("x:R3J7N"), undefined);
-    assert.equal(parseAnchor("42:xyz"), undefined);
-    assert.equal(parseAnchor("R3J7N|const value = 1;"), undefined);
-      assert.equal(parseAnchor("-----"), undefined);
-    assert.equal(
-      invalidAnchorMessage("R3J7N|const value = 1;"),
-      "invalid anchor 'R3J7N|const value = 1;'. Use only 'R3J7N' before '|'.",
-    );
-    assert.equal(invalidAnchorMessage("42"), "invalid anchor '42'. Expected '<hash>', e.g. 'ABCDE'.");
-  });
-
+describe("text helpers", () => {
   it("splits text while preserving editable lines semantics", () => {
     assert.deepEqual(splitLines(""), []);
     assert.deepEqual(splitLines("one\n"), ["one"]);
@@ -86,12 +49,12 @@ describe("hash helpers", () => {
 
 describe("quick-edit renderer helpers", () => {
   it("summarizes compact quick-edit diffs", () => {
-    const text = "── diff ──\n:2\n- old\n+ new\n\nR3J7N|alpha";
+    const text = "── diff ──\n:2\n- old\n+ new\n\n1| alpha";
     assert.deepEqual(summarizeQuickEditOutput(text), { additions: 1, removals: 1, hasDiff: true });
   });
 
   it("handles context-only quick-edit output", () => {
-    assert.deepEqual(summarizeQuickEditOutput("R3J7N|alpha"), { additions: 0, removals: 0, hasDiff: false });
+    assert.deepEqual(summarizeQuickEditOutput("1| alpha"), { additions: 0, removals: 0, hasDiff: false });
   });
   it("prefers quick_edit by removing built-in edit from active tools", () => {
     assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit", "substitute_edit"]);
@@ -108,6 +71,7 @@ describe("quick edits", () => {
     assert.match(result, /── diff ──/);
     assert.match(result, /- two/);
     assert.match(result, /\+ TWO/);
+    assert.match(result, /1\| one\n2\| TWO\n3\| three/);
   });
 
   it("checks expectedStartLine before editing", async () => {
@@ -207,7 +171,7 @@ describe("quick edits", () => {
     assert.equal(await readFile(file, "utf8"), "start\ndup\nDUP\nend");
   });
 
-  it("hides duplicate anchors in quick_edit diff output", async () => {
+  it("renders duplicate lines plainly in quick_edit diff output", async () => {
     const original = ["before", "dup", "dup", "after"];
     const file = await tempFile("sample.txt", original.join("\n"));
 
@@ -320,327 +284,3 @@ describe("substitute edits", () => {
     assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree");
   });
 });
-
-describe("structured edits", () => {
-  it("applies counted substitutions inside an anchored scope only", async () => {
-    const original = [
-      "function build() {",
-      "  logger.debug(\"a\");",
-      "  logger.debug(\"b\");",
-      "}",
-      "logger.debug(\"outside\");",
-    ];
-    const file = await tempFile("sample.ts", `${original.join("\n")}\n`);
-
-    const result = await applyStructuredEdits(
-      file,
-      [{ type: "substitute", old: "logger.debug", new: "logger.trace", count: 2 }],
-      { start: anchorFor(original, 1), end: anchorFor(original, 4) },
-    );
-
-    assert.match(result, /logger\.trace/);
-    assert.equal(
-      await readFile(file, "utf8"),
-      'function build() {\n  logger.trace("a");\n  logger.trace("b");\n}\nlogger.debug("outside");\n',
-    );
-  });
-
-  it("rejects substitute count mismatches atomically with occurrence contexts", async () => {
-    const original = ["alpha", "beta", "gamma"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    await assert.rejects(
-      () => applyStructuredEdits(file, [{ type: "substitute", old: "beta", new: "BETA", count: 2 }]),
-      /op\[0\] substitute: substitute expected 2 occurrence[\s\S]*Occurrence contexts:[\s\S]*@@ occurrence 1 line 2[\s\S]*\|beta/,
-    );
-    assert.equal(await readFile(file, "utf8"), original.join("\n"));
-  });
-
-  it("omits substitute occurrence contexts for broad mismatches", async () => {
-    const original = Array.from({ length: 11 }, () => "target");
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    await assert.rejects(
-      () => applyStructuredEdits(file, [{ type: "substitute", old: "target", new: "TARGET", count: 1 }]),
-      (error) => {
-        assert.ok(error instanceof Error);
-        assert.match(error.message, /substitute expected 1 occurrence/);
-        assert.doesNotMatch(error.message, /Occurrence contexts:/);
-        return true;
-      },
-    );
-    assert.equal(await readFile(file, "utf8"), original.join("\n"));
-  });
-
-  it("applies anchored insert, replace, and delete operations in order", async () => {
-    const original = ["start", "middle", "remove", "end"];
-    const file = await tempFile("sample.txt", `${original.join("\n")}\n`);
-
-    const result = await applyStructuredEdits(file, [
-      { type: "insert_after", anchor: anchorFor(original, 1), lines: ["inserted"] },
-      { type: "replace_lines", start: anchorFor(original, 2), lines: ["MIDDLE", "middle-extra"] },
-      { type: "delete_lines", start: anchorFor(original, 3) },
-    ]);
-
-    assert.equal(await readFile(file, "utf8"), "start\ninserted\nMIDDLE\nmiddle-extra\nend\n");
-    assert.doesNotMatch(result, /\n---\n/);
-  });
-
-  it("resolves structured hash-only anchors after earlier line shifts", async () => {
-    const original = ["one", "two", "three"];
-    const file = await tempFile("sample.txt", "zero\none\ntwo\nthree");
-
-    await applyStructuredEdits(file, [{ type: "replace_lines", start: anchorFor(original, 2), lines: ["TWO"] }]);
-
-    assert.equal(await readFile(file, "utf8"), "zero\none\nTWO\nthree");
-  });
-
-  it("rejects duplicate structured hash-only anchors as ambiguous and returns candidate contexts", async () => {
-    const original = ["start", "dup", "dup", "end"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    await assert.rejects(
-      () => applyStructuredEdits(file, [{ type: "replace_lines", start: lineHash("dup"), lines: ["DUP"] }]),
-      /ambiguous anchor[\s\S]*Candidate contexts:[\s\S]*@@ occurrence 1 line 2[\s\S]*-----\|dup[\s\S]*@@ occurrence 2 line 3/,
-    );
-    assert.equal(await readFile(file, "utf8"), original.join("\n"));
-  });
-
-
-  it("handles repeated identical blocks with structured range anchors", async () => {
-    const original = [
-      "section A",
-      "if (flag) {",
-      "  return null;",
-      "}",
-      "section B",
-      "if (flag) {",
-      "  return null;",
-      "}",
-      "section C",
-    ];
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    await assert.rejects(
-      () => applyStructuredEdits(file, [{ type: "replace_lines", start: lineHash("  return null;"), lines: ["  return value;"] }]),
-      /ambiguous anchor/,
-    );
-
-    await applyStructuredEdits(file, [
-      {
-        type: "replace_lines",
-        start: anchorFor(original, 5),
-        end: anchorFor(original, 9),
-        lines: ["section B", "if (flag) {", "  return value;", "}", "section C"],
-      },
-    ]);
-
-    assert.equal(
-      await readFile(file, "utf8"),
-      [
-        "section A",
-        "if (flag) {",
-        "  return null;",
-        "}",
-        "section B",
-        "if (flag) {",
-        "  return value;",
-        "}",
-        "section C",
-      ].join("\n"),
-    );
-  });
-
-  it("appends after the last anchored line with insert_after", async () => {
-    const original = ["one", "two"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    const result = await applyStructuredEdits(file, [{ type: "insert_after", anchor: anchorFor(original, 2), lines: ["three", "four"] }]);
-
-    assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\nfour");
-    assert.doesNotMatch(result, /- two/);
-    assert.match(result, /\+ three/);
-    assert.match(result, /\+ four/);
-  });
-
-  it("can substitute the current whole file after an earlier line operation", async () => {
-    const original = ["start", "middle", "end"];
-    const file = await tempFile("sample.txt", `${original.join("\n")}\n`);
-
-    await applyStructuredEdits(file, [
-      { type: "insert_after", anchor: anchorFor(original, 1), lines: ["middle"] },
-      { type: "substitute", old: "middle", new: "MIDDLE", count: 2 },
-    ]);
-
-    assert.equal(await readFile(file, "utf8"), "start\nMIDDLE\nMIDDLE\nend\n");
-  });
-
-  it("rejects stale scope anchors atomically", async () => {
-    const original = ["start", "body", "end"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-    const staleScopeLines = ["start", "OLD", "end"];
-
-    await assert.rejects(
-      () => applyStructuredEdits(
-        file,
-        [{ type: "substitute", old: "body", new: "BODY" }],
-        { start: anchorFor(staleScopeLines, 2), end: anchorFor(original, 3) },
-      ),
-      /[Ss]tale anchor/,
-    );
-    assert.equal(await readFile(file, "utf8"), original.join("\n"));
-  });
-
-  it("rejects stale operation anchors atomically", async () => {
-    const original = ["one", "two", "three"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-    const staleLines = ["one", "OLD", "three"];
-
-    await assert.rejects(
-      () => applyStructuredEdits(file, [{ type: "replace_lines", start: anchorFor(staleLines, 2), lines: ["TWO"] }]),
-      /op\[0\] replace_lines: Stale anchor/,
-    );
-    await assert.rejects(
-      () => applyStructuredEdits(file, [{ type: "insert_after", anchor: `${anchorFor(original, 2)}|two`, lines: ["x"] }]),
-      /Use only '.+' before '\|'\./,
-    );
-    assert.equal(await readFile(file, "utf8"), original.join("\n"));
-  });
-
-  it("rejects reversed and out-of-bounds line ranges atomically", async () => {
-    const original = ["one", "two"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    await assert.rejects(
-      () => applyStructuredEdits(file, [{ type: "replace_lines", start: anchorFor(original, 2), end: anchorFor(original, 1), lines: ["x"] }]),
-      /end < start/,
-    );
-    await assert.rejects(
-      () => applyStructuredEdits(file, [{ type: "delete_lines", start: lineHash("") }]),
-      /[Ss]tale anchor/,
-    );
-    assert.equal(await readFile(file, "utf8"), original.join("\n"));
-  });
-
-  it("rolls back earlier in-memory changes when a later operation fails", async () => {
-    const original = ["alpha", "beta"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    await assert.rejects(
-      () => applyStructuredEdits(file, [
-        { type: "substitute", old: "alpha", new: "ALPHA" },
-        { type: "substitute", old: "missing", new: "MISSING" },
-      ]),
-      /op\[1\] substitute: substitute expected 1 occurrence/,
-    );
-    assert.equal(await readFile(file, "utf8"), original.join("\n"));
-  });
-
-  it("rejects invalid substitute operations before writing", async () => {
-    const original = ["alpha"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "", new: "x" }]), /old must not be empty/);
-    await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "alpha", new: "alpha" }]), /must differ/);
-    await assert.rejects(() => applyStructuredEdits(file, [{ type: "substitute", old: "alpha", new: "a\nb" }]), /single-line[\s\S]*replace_lines with nearby unique anchors/);
-    assert.equal(await readFile(file, "utf8"), original.join("\n"));
-  });
-
-  it("returns concise syntax guidance for malformed structured_edit arguments", async () => {
-    const registered: any[] = [];
-    snapEditExtension({
-      on() {},
-      registerTool(tool: any) {
-        registered.push(tool);
-      },
-      setActiveTools() {},
-      getActiveTools() {
-        return [];
-      },
-    } as any);
-    const tool = registered.find((entry) => entry.name === "structured_edit");
-    assert.ok(tool);
-
-    const executePrepared = (input: Record<string, unknown>) => {
-      const prepared = tool.prepareArguments(input);
-      return tool.execute("call-1", prepared, undefined, undefined, { cwd: process.cwd() });
-    };
-
-    await assert.rejects(
-      () => executePrepared({
-        path: "style.css",
-        scope: '\n<parameter name="start">ABCDE',
-        end: "VWXYZ",
-        ops: [{ type: "substitute", old: "a", new: "b", count: 1 }],
-      }),
-      /Invalid structured_edit scope\. Correct syntax: "scope":\{"start":"ABCDE","end":"VWXYZ"\}\. Keep start\/end inside scope\./,
-    );
-    await assert.rejects(
-      () => executePrepared({ path: "style.css", type: "replace_lines", start: "ABCDE", lines: ["x"] }),
-      /Invalid structured_edit arguments\. Use "ops":\[/,
-    );
-    await assert.rejects(
-      () => executePrepared({ path: "style.css", ops: [{ type: "replace_range", start: "ABCDE", end: "VWXYZ", lines: ["x"] }] }),
-      /Invalid structured_edit ops\[0\]\. Allowed types: substitute, replace_lines, delete_lines, insert_before, insert_after\. For range replacement use: \{"type":"replace_lines"/,
-    );
-    await assert.rejects(
-      () => executePrepared({ path: "style.css", ops: [{ type: "replace_lines", start: "ABCDE" }] }),
-      /Invalid structured_edit ops\[0\] replace_lines\. Correct syntax: \{"type":"replace_lines","start":"ABCDE","end":"VWXYZ","lines":\["\.\.\."\]\}/,
-    );
-    await assert.rejects(
-      () => executePrepared({ path: "style.css", ops: [{ type: "insert_after", start: "ABCDE", lines: ["x"] }] }),
-      /Invalid structured_edit ops\[0\] insert_after\. Correct syntax: \{"type":"insert_after","anchor":"ABCDE","lines":\["\.\.\."\]\}/,
-    );
-  });
-
-  it("replaces multiple occurrences on one line when count matches", async () => {
-    const file = await tempFile("sample.txt", "foo foo\nbar");
-
-    await applyStructuredEdits(file, [{ type: "substitute", old: "foo", new: "baz", count: 2 }]);
-
-    assert.equal(await readFile(file, "utf8"), "baz baz\nbar");
-  });
-
-  it("preserves CRLF for structured line operations", async () => {
-    const original = ["one", "two", "three"];
-    const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree");
-
-    await applyStructuredEdits(file, [{ type: "insert_after", anchor: anchorFor(original, 2), lines: ["inserted"] }]);
-
-    assert.equal(await readFile(file, "utf8"), "one\r\ntwo\r\ninserted\r\nthree");
-  });
-
-  it("preserves CRLF and absence of trailing newline", async () => {
-    const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree");
-    await applyStructuredEdits(file, [{ type: "substitute", old: "two", new: "TWO" }]);
-
-    assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree");
-  });
-});
-
-  it("selects specific occurrence with structured_edit replace_lines", async () => {
-    const original = ["start", "dup", "middle", "dup", "end"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    await applyStructuredEdits(file, [{ type: "replace_lines", start: lineHash("dup"), occurrence: 2, lines: ["SECOND"] }]);
-    assert.equal(await readFile(file, "utf8"), "start\ndup\nmiddle\nSECOND\nend");
-  });
-
-  it("selects specific occurrence with structured_edit insert_before", async () => {
-    const original = ["start", "dup", "middle", "dup", "end"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    await applyStructuredEdits(file, [{ type: "insert_before", anchor: lineHash("dup"), occurrence: 2, lines: ["BEFORE_SECOND"] }]);
-    assert.equal(await readFile(file, "utf8"), "start\ndup\nmiddle\nBEFORE_SECOND\ndup\nend");
-  });
-
-  it("rejects out-of-range occurrence in structured_edit", async () => {
-    const original = ["start", "dup", "dup", "end"];
-    const file = await tempFile("sample.txt", original.join("\n"));
-
-    await assert.rejects(
-      () => applyStructuredEdits(file, [{ type: "delete_lines", start: lineHash("dup"), occurrence: 5 }]),
-      /occurrence 5 out of range \(1-2\)/,
-    );
-    assert.equal(await readFile(file, "utf8"), original.join("\n"));
-  });

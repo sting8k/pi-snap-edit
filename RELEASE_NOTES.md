@@ -1,3 +1,34 @@
+## pi-snap-edit v2.0.0
+
+Breaking cleanup release. Removes the hash-anchored `structured_edit` workflow and standardizes the active workflow around line-numbered `quick_edit` plus `substitute_edit`.
+
+### Changes
+
+- Removed the `structured_edit` callable tool and its public exports.
+- Removed structured edit schemas, engine, anchor parsing helpers, and tests.
+- Changed refreshed edit context output to absolute padded line numbers, so follow-up `quick_edit` calls can use the returned context directly.
+- Updated README and AGENTS guidance to match the current line-number workflow.
+
+### Breaking Changes
+
+- `structured_edit` is no longer registered or exported.
+- `applyStructuredEdits`, `StructuredEditOp`, `StructuredEditParams`, `parseAnchor`, and `invalidAnchorMessage` are no longer exported.
+- Refreshed context output is now `line| content` instead of `HASH|content`.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (23 tests).
+- `npm pack --dry-run` passed.
+
+---
+
 ## pi-snap-edit v1.1.1
 
 Hotfix release. Restored numbered read output that was accidentally removed in v1.1.0.
@@ -32,7 +63,6 @@ Simplified output release. Removed `fileHash` from read hook and edit responses,
 - Removed hash prefix from diff output: now shows `- content` / `+ content` instead of `- HASH|content` / `+ HASH|content`.
 - Fixed security issue: `expectedStartLine` mismatch errors no longer leak actual line content.
 - Made `expectedStartLine` required for all `quick_edit` operations.
-- Context output still includes hash format `HASH|content` for `structured_edit` references.
 
 ### Breaking Changes
 

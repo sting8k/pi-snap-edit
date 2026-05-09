@@ -6,18 +6,18 @@
 
 Core behavior:
 
-- Hook Pi `read` results and add `<line>:<hash>|<content>` anchors.
-- Provide `quick_edit` for atomic anchored line/range replacements.
-- Provide `structured_edit` for scoped counted substitutions and anchored insert/delete/replace operations.
-- Reject stale anchors and failed batches without partial writes.
+- Hook Pi `read` results and add padded line numbers.
+- Provide `quick_edit` for atomic line/range replacements guarded by `expectedStartLine`.
+- Provide `substitute_edit` for counted literal substitutions inside explicit line ranges.
+- Reject stale guards, invalid ranges, failed substitutions, and failed batches without partial writes.
 - Preserve line endings, including CRLF and no-trailing-newline files.
 
 The package is experimental. Keep changes small, explicit, and well-tested.
 
 ## Development rules
 
-- Keep callable tool names stable: `quick_edit` and `structured_edit`.
-- Do not reintroduce the built-in `edit` tool preference; the extension should prefer `quick_edit` and `structured_edit`.
+- Keep callable tool names stable: `quick_edit` and `substitute_edit`.
+- Do not reintroduce the built-in `edit` tool preference; the extension should prefer `quick_edit` and `substitute_edit`.
 - Do not add config, slash commands, widgets, MCP, or external editor/script dependencies unless explicitly requested.
 - Avoid broad refactors. Touch only files needed for the task.
 - Preserve existing style and TypeScript strictness.
@@ -40,13 +40,13 @@ npm run typecheck && npm test && git diff --check
 ## Source layout
 
 - `src/index.ts`: Pi extension registration, tool wiring, active tool lifecycle, public re-exports.
-- `src/anchors.ts`: line hash, anchor parsing, anchored line formatting.
+- `src/anchors.ts`: legacy line hash helpers.
 - `src/text.ts`: line splitting and line-ending detection.
 - `src/diff.ts`: diff formatting and merged refreshed context output.
 - `src/schemas.ts`: TypeBox schemas and edit operation types.
 - `src/quick-edit.ts`: `quick_edit` engine.
-- `src/structured-edit.ts`: `structured_edit` engine.
-- `src/read-hook.ts`: `read` result hashing hook.
+- `src/substitute-edit.ts`: `substitute_edit` engine.
+- `src/read-hook.ts`: `read` result line-numbering hook.
 - `src/render.ts`: TUI render helpers.
 - `src/active-tools.ts`: active tool preference helper.
 - `test/snap-edit.test.ts`: unit and engine tests.
@@ -55,11 +55,11 @@ npm run typecheck && npm test && git diff --check
 
 Cover these cases when changing edit behavior:
 
-- stale hash rejection
+- stale `expectedStartLine` rejection
 - atomic rollback on failure
 - overlapping/reversed/out-of-bounds ranges
-- scoped substitutions and count mismatch
-- insert/delete/replace line operations
+- counted substitutions and count mismatch
+- insert/delete/replace line operations through `quick_edit`
 - CRLF and no-trailing-newline preservation
 - escape-heavy strings when relevant
 
@@ -68,10 +68,10 @@ For runtime confidence, use ignored fixtures under `tmp/` and actual Pi tools wh
 Suggested live-test flow:
 
 1. Create fixtures under `tmp/live-*` for realistic files: TypeScript, JSON, CRLF text, EOF append, and atomic-failure cases.
-2. Use Pi `read` to get real `<line>:<hash>` anchors from those fixtures.
-3. Exercise actual `quick_edit` and `structured_edit` tools, not only exported engine functions.
+2. Use Pi `read` to get real padded line numbers from those fixtures.
+3. Exercise actual `quick_edit` and `substitute_edit` tools, not only exported engine functions.
 4. Include at least one escape-heavy case with quotes, backslashes, regex, template literals, `$`, and unicode.
-5. Include negative checks: stale anchor rejection and a later failing operation after an earlier valid in-memory change.
+5. Include negative checks: stale `expectedStartLine` rejection and a later failing operation after an earlier valid in-memory change.
 6. Verify exact file contents with a script, including JSON parse checks and CRLF/no-trailing-newline bytes.
 7. Leave or delete `tmp/` artifacts as convenient; they should not affect git status.
 

@@ -1,4 +1,3 @@
-import { hashLines } from "./anchors.js";
 
 export const CONTEXT_LINES = 5;
 
@@ -29,7 +28,14 @@ export function formatContexts(lines: string[], ranges: ContextRange[]): string 
     }
   }
 
-  return merged.map((range) => hashLines(lines.slice(range.startIndex, range.endIndex), range.startIndex + 1)).join("\n---\n");
+  const width = String(lines.length).length;
+  return merged
+    .map((range) => lines
+      .slice(range.startIndex, range.endIndex)
+      .map((line, index) => `${String(range.startIndex + index + 1).padStart(width, " ")}| ${line}`)
+      .join("\n"),
+    )
+    .join("\n---\n");
 }
 
 
