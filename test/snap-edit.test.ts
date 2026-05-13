@@ -97,6 +97,15 @@ describe("quick edits", () => {
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
 
+  it("shows nearby context when expectedStartLine moved elsewhere", async () => {
+    const file = await tempFile("sample.txt", "one\ninserted\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n");
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["TWO"] }]),
+      /expectedStartLine mismatch at line 2[\s\S]*Expected start line found at line\(s\): 3\.[\s\S]*3\| two[\s\S]*8\| seven/,
+    );
+    assert.equal(await readFile(file, "utf8"), "one\ninserted\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n");
+  });
   it("applies multi-line replacements in reverse order without shifting later lines", async () => {
     const original = ["a", "b", "c", "d", "e"];
     const file = await tempFile("sample.txt", `${original.join("\n")}\n`);

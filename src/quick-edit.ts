@@ -30,6 +30,25 @@ function validateLineRange(lineCount: number, edit: Edit, label: string): Resolv
   return { startLine, endLine, lines: edit.lines, insert: false };
 }
 
+function expectedLineHint(lines: string[], expectedStartLine: string): string {
+  const matches: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i] === expectedStartLine) matches.push(i + 1);
+  }
+  if (matches.length === 0) return "";
+
+  const shown = matches.slice(0, 5);
+  const ranges = shown.map((lineNumber) => ({
+    startIndex: Math.max(0, lineNumber - 1 - CONTEXT_LINES),
+    endIndex: Math.min(lines.length, lineNumber + CONTEXT_LINES),
+  }));
+  const suffix = matches.length > shown.length ? ` (showing first ${shown.length} of ${matches.length})` : "";
+  return [
+    `Expected start line found at line(s): ${shown.join(", ")}${suffix}.`,
+    formatContexts(lines, ranges),
+  ].join("\n");
+}
+
 export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Promise<string> {
   if (edits.length === 0) throw new Error("edits must contain at least one replacement");
 
@@ -43,10 +62,11 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
 
     const actual = lines[resolved[index]!.startLine - 1] ?? "";
     if (actual !== expectedStartLine) {
+      const hint = expectedLineHint(lines, expectedStartLine);
       throw new Error(
         [
           `edit[${index}] expectedStartLine mismatch at line ${resolved[index]!.startLine}; no edits were applied.`,
-          "Read the file to see current content.",
+          hint || "Read the file to see current content.",
         ].join("\n"),
       );
     }
