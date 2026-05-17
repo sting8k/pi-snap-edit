@@ -44,6 +44,7 @@ export default function (pi: ExtensionAPI) {
       `Omit end for a single-line replacement. Use lines: [] to delete a line or range. Use lines: [""] for one blank line.`,
       "Use start=lineCount+1 with no end to insert at EOF; for an empty file, start=1 inserts the first line.",
       "expectedStartLine only checks the start line; it does not verify the full range or detect line shifts from insertions/deletions above.",
+      "Batch edits are snapshot-based, not sequential; do not renumber later edits after earlier insert/delete ops.",
       "Batch multiple independent ranges in one call; overlapping ranges are rejected atomically.",
     ],
     parameters: QuickEditParams,

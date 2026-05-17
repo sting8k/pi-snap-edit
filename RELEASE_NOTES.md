@@ -1,3 +1,28 @@
+## pi-snap-edit v2.1.1
+
+Patch release. Improves `quick_edit` stale line recovery and clarifies batch semantics for agents.
+
+### Changes
+
+- `quick_edit` expectedStartLine mismatch errors now search for the expected line elsewhere in the file and include line-numbered ±5 context when found.
+- Keeps the no-match fallback terse without exposing the unexpected line content at the requested position.
+- Clarified prompt guidance: `quick_edit` batch edits are snapshot-based, not sequential; do not renumber later edits after earlier insert/delete ops.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (31 tests).
+- `git diff --check` passed.
+- `npm pack --dry-run` passed.
+
+---
+
 ## pi-snap-edit v2.1.0
 
 Feature release. Adds `target_edit` for exact-target edits when agents know stable marker text but line numbers are inconvenient.
