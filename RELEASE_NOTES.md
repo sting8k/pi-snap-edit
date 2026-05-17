@@ -1,3 +1,33 @@
+## pi-snap-edit v3.0.0
+
+Breaking release. Temporarily disables the callable `substitute_edit` tool while keeping its engine/export available for compatibility and rollback.
+
+### Changes
+
+- Removed `substitute_edit` from Pi tool registration.
+- Removed `substitute_edit` from preferred active tools and actively filters stale active `substitute_edit` entries on session start.
+- Kept `applySubstituteEdits` export and engine tests intact.
+- Updated README, AGENTS, and active-tool tests to reflect the active tool set: `quick_edit` and `target_edit`.
+
+### Breaking Changes
+
+- `substitute_edit` is no longer available as a callable Pi tool.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (31 tests).
+- `git diff --check` passed.
+- `npm pack --dry-run` passed.
+
+---
+
 ## pi-snap-edit v2.1.1
 
 Patch release. Improves `quick_edit` stale line recovery and clarifies batch semantics for agents.

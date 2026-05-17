@@ -57,9 +57,9 @@ describe("quick-edit renderer helpers", () => {
   it("handles context-only quick-edit output", () => {
     assert.deepEqual(summarizeQuickEditOutput("1| alpha"), { additions: 0, removals: 0, hasDiff: false });
   });
-  it("prefers quick_edit by removing built-in edit from active tools", () => {
-    assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit", "substitute_edit", "target_edit"]);
-    assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "edit"]), ["read", "quick_edit", "substitute_edit", "target_edit"]);
+  it("prefers quick_edit by removing disabled edit tools from active tools", () => {
+    assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit", "target_edit"]);
+    assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "substitute_edit", "edit"]), ["read", "quick_edit", "target_edit"]);
   });
 });
 

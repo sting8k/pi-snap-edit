@@ -6,8 +6,7 @@ import { preferQuickEditTools } from "./active-tools.js";
 import { getFileStatSnapshot } from "./file-stat.js";
 import { applyQuickEdits } from "./quick-edit.js";
 import { color, renderQuickEditOutput, summarizeQuickEditOutput } from "./render.js";
-import { QuickEditParams, SubstituteEditParams, TargetEditParams } from "./schemas.js";
-import { applySubstituteEdits } from "./substitute-edit.js";
+import { QuickEditParams, TargetEditParams } from "./schemas.js";
 import { numberReadText } from "./read-hook.js";
 import { applyTargetEdits } from "./target-edit.js";
 export { formatHash, hashLines, lineHash } from "./anchors.js";
@@ -72,47 +71,6 @@ export default function (pi: ExtensionAPI) {
       return new Text(`${header}\n${renderQuickEditOutput(theme, text)}`, 0, 0);
     },
   });
-
-  pi.registerTool({
-    name: "substitute_edit",
-    label: "substitute-edit",
-    description:
-      "Apply ordered literal substitutions inside a required 1-indexed line range. Atomic: any count mismatch rejects the whole batch.",
-    promptSnippet: "Substitute literal text inside a line range",
-    promptGuidelines: [
-      "Always provide a narrow start/end line range. substitute_edit never runs over the whole file implicitly.",
-      "Use substitutions[] for ordered single-line literal replacements. No regex; use quick_edit for multi-line changes.",
-      "Each substitution count is required and checked before that substitution is applied.",
-      "Array order matters: later substitutions see earlier in-memory substitutions, but nothing is written unless all counts match.",
-    ],
-    parameters: SubstituteEditParams,
-
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const absolutePath = resolvePath(ctx.cwd, params.path);
-      const text = await withFileMutationQueue(absolutePath, () =>
-        applySubstituteEdits(absolutePath, params.start, params.end, params.substitutions),
-      );
-      return { content: [{ type: "text" as const, text }], details: undefined };
-    },
-
-    renderResult(result, { expanded, isPartial }, theme) {
-      if (isPartial) return new Text(`${color(theme, "dim", "↳")} ${color(theme, "muted", "applying substitute-edit...")}`, 0, 0);
-
-      const text = result.content?.filter((c) => c.type === "text").map((c) => c.text).join("\n") ?? "";
-      if ((result as any).isError) return new Text(color(theme, "error", text.trim() || "substitute-edit failed"), 0, 0);
-
-      const summary = summarizeQuickEditOutput(text);
-      const stats = summary.hasDiff
-        ? ` ${color(theme, "success", `+${summary.additions}`)} ${color(theme, "error", `-${summary.removals}`)}`
-        : "";
-      const hint = !expanded && text ? ` ${color(theme, "muted", `(${keyHint("app.tools.expand", "to expand")})`)}` : "";
-      const header = `${color(theme, "dim", "↳")} ${color(theme, "success", "substitute-edit applied")}${stats}${hint}`;
-
-      if (!expanded || !text) return new Text(header, 0, 0);
-      return new Text(`${header}\n${renderQuickEditOutput(theme, text)}`, 0, 0);
-    },
-  });
-
 
   pi.registerTool({
     name: "target_edit",

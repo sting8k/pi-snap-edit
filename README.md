@@ -20,13 +20,13 @@ Earlier versions centered the main read-driven workflow on `<line>:<hash>|<conte
 
 ## Behavior
 
-`pi-snap-edit` makes `quick_edit`, `substitute_edit`, and `target_edit` the preferred active editing tools. Use line-numbered tools when target lines are known; use `target_edit` when the stable handle is exact text/marker content instead.
+`pi-snap-edit` currently registers `quick_edit` and `target_edit` as preferred active editing tools. Use line-numbered edits when target lines are known; use `target_edit` when the stable handle is exact text/marker content instead.
 
 | Need | Pi core edit tool | pi-snap-edit |
 | --- | --- | --- |
-| Small exact text replacement | Best when the exact old text is short and easy to quote | Use `substitute_edit` in a line range, or `target_edit` by exact target occurrence/count |
+| Small exact text replacement | Best when the exact old text is short and easy to quote | Use `target_edit` by exact target occurrence/count, or `quick_edit` when line numbers are known |
 | Large block replacement | Requires sending the full exact old block | Replace by 1-indexed line/range with `quick_edit` |
-| Escape-heavy text (quotes, backslashes, regex, templates) | Can get noisy because old/new text must be escaped | Easier: replace whole lines, use counted literal substitutions, or target a small marker |
+| Escape-heavy text (quotes, backslashes, regex, templates) | Can get noisy because old/new text must be escaped | Easier: replace whole lines or target a small marker |
 | Output from `rg -n` / `grep -n` | Usually needs another read or exact old text | Directly usable with line numbers and `expectedStartLine` |
 | Concurrent file changes | Exact old text must still match | Start-line guarded; re-read when line positions may have shifted |
 | Duplicate/repeated blocks | Exact text can be more precise | Use explicit line numbers plus `expectedStartLine`, or `target_edit` with `scope` + occurrence/count |
@@ -35,10 +35,10 @@ Earlier versions centered the main read-driven workflow on `<line>:<hash>|<conte
 Tool behavior:
 
 - `read` output includes padded line numbers; offset reads keep absolute file line numbers.
-- On session start, the extension removes Pi's built-in `edit` tool from the active set and adds `quick_edit`, `substitute_edit`, and `target_edit`.
+- On session start, the extension removes Pi's built-in `edit` tool from the active set and adds `quick_edit` and `target_edit`.
 - `quick_edit` performs atomic line/range replacements using 1-indexed line numbers; requires `expectedStartLine` for each edit.
 - `expectedStartLine` guards the current `start` line only; it does not verify the full range or detect line shifts from insertions/deletions above.
-- `substitute_edit` performs ordered, counted, literal single-line substitutions inside a required range; no content guards.
+- `substitute_edit` registration is temporarily disabled; its engine remains exported for now.
 - `target_edit` performs ordered exact-target operations: `replace`, `insert`, and `delete`; each operation requires exactly one selector, `occurrence` or `count`.
 - `target_edit` `insert` adds full `lines` before/after the line(s) containing the target; `replace` handles inline or multi-line text replacement.
 - Line endings are preserved, including CRLF and no-trailing-newline files.
