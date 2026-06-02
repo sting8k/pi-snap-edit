@@ -1,6 +1,6 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { keyHint, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { keyHint, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import path from "node:path";
 import { preferQuickEditTools } from "./active-tools.js";
 import { getFileStatSnapshot } from "./file-stat.js";

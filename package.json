@@ -1,6 +1,6 @@
 {
   "name": "pi-snap-edit",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Fast, precise, script-free edits for Pi agents",
   "keywords": [
     "pi-package",
@@ -31,12 +31,12 @@
     "@sinclair/typebox": "^0.34.41"
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*"
+    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@earendil-works/pi-tui": "^0.78.0"
   },
   "devDependencies": {
-    "@mariozechner/pi-coding-agent": "^0.73.0",
-    "@mariozechner/pi-tui": "^0.73.0",
+    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@earendil-works/pi-tui": "^0.78.0",
     "@types/node": "^24.3.0",
     "typescript": "^5.9.3"
   },
