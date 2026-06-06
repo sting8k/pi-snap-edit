@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { keyHint, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import os from "node:os";
 import path from "node:path";
 import { preferQuickEditTools } from "./active-tools.js";
 import { getFileStatSnapshot } from "./file-stat.js";
@@ -22,6 +23,8 @@ export { applyTargetEdits } from "./target-edit.js";
 
 
 function resolvePath(cwd: string, inputPath: string): string {
+  if (inputPath === "~") return os.homedir();
+  if (inputPath.startsWith("~/")) return path.join(os.homedir(), inputPath.slice(2));
   return path.isAbsolute(inputPath) ? inputPath : path.resolve(cwd, inputPath);
 }
 
@@ -113,20 +116,22 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_result", async (event) => {
-    if (event.toolName !== "read" || event.isError) return;
-    if (event.content.some((part) => part.type === "image")) return;
-    if (!isRecord(event.input) || typeof event.input.path !== "string") return;
+    try {
+      if (event.toolName !== "read" || event.isError) return;
+      if (event.content.some((part) => part.type === "image")) return;
+      if (!isRecord(event.input) || typeof event.input.path !== "string") return;
 
-    const absolutePath = resolvePath(process.cwd(), event.input.path);
-    const { lineCount } = await getFileStatSnapshot(absolutePath);
-    const startLine = typeof event.input.offset === "number" && Number.isFinite(event.input.offset)
-      ? Math.max(1, Math.floor(event.input.offset))
-      : 1;
-    return {
-      content: event.content.map((part) =>
-        part.type === "text" ? { ...part, text: numberReadText(part.text, { startLine, totalLineCount: lineCount }) } : part,
-      ),
-    };
+      const absolutePath = resolvePath(process.cwd(), event.input.path);
+      const { lineCount } = await getFileStatSnapshot(absolutePath);
+      const startLine = typeof event.input.offset === "number" && Number.isFinite(event.input.offset)
+        ? Math.max(1, Math.floor(event.input.offset))
+        : 1;
+      return {
+        content: event.content.map((part) =>
+          part.type === "text" ? { ...part, text: numberReadText(part.text, { startLine, totalLineCount: lineCount }) } : part,
+        ),
+      };
+    } catch {}
   });
 
   pi.on("session_start", () => {
