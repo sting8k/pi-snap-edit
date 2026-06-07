@@ -42,7 +42,9 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: "Edit files by line number with expectedStartLine guard",
     promptGuidelines: [
       "Use start/end as 1-indexed line numbers from read, rg -n, grep -n, or srcwalk output.",
-      "Always provide expectedStartLine with the exact current content of the start line to guard against stale edits.",
+      "Always provide expectedStartLine with the current content of the start line to guard against stale edits.",
+      "Default guard matching is exact. When indentation/trailing whitespace is uncertain, set expectedStartLineMatch=\"trim\" and provide the trimmed start line.",
+      "Use preserveIndent=true with expectedStartLineMatch=\"trim\" when replacement lines should inherit the current start line indentation; provide unindented replacement lines.",
       `Omit end for a single-line replacement. Use lines: [] to delete a line or range. Use lines: [""] for one blank line.`,
       "Use start=lineCount+1 with no end to insert at EOF; for an empty file, start=1 inserts the first line.",
       "expectedStartLine only checks the start line; it does not verify the full range or detect line shifts from insertions/deletions above.",

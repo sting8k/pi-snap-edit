@@ -38,6 +38,7 @@ Tool behavior:
 - On session start, the extension removes Pi's built-in `edit` tool from the active set and adds `quick_edit` and `target_edit`.
 - `quick_edit` performs atomic line/range replacements using 1-indexed line numbers; requires `expectedStartLine` for each edit.
 - `expectedStartLine` guards the current `start` line only; it does not verify the full range or detect line shifts from insertions/deletions above.
+- `quick_edit` defaults to exact guard matching. Use `expectedStartLineMatch: "trim"` plus `preserveIndent: true` when indentation/trailing whitespace is uncertain and replacement lines should inherit the current line indentation.
 - `substitute_edit` registration is temporarily disabled; its engine remains exported for now.
 - `target_edit` performs ordered exact-target operations: `replace`, `insert`, and `delete`; each operation requires exactly one selector, `occurrence` or `count`.
 - `target_edit` `insert` adds full `lines` before/after the line(s) containing the target; `replace` handles inline or multi-line text replacement.

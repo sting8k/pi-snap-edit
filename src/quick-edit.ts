@@ -10,6 +10,7 @@ type ResolvedEdit = {
   lines: string[];
   insert: boolean;
 };
+type ExpectedStartLineMatch = NonNullable<Edit["expectedStartLineMatch"]>;
 
 function validateLineRange(lineCount: number, edit: Edit, label: string): ResolvedEdit {
   const startLine = edit.start;
@@ -30,10 +31,28 @@ function validateLineRange(lineCount: number, edit: Edit, label: string): Resolv
   return { startLine, endLine, lines: edit.lines, insert: false };
 }
 
-function expectedLineHint(lines: string[], expectedStartLine: string): string {
+function expectedLineMatchMode(edit: Edit, label: string): ExpectedStartLineMatch {
+  const mode = edit.expectedStartLineMatch ?? "exact";
+  if (mode !== "exact" && mode !== "trim") throw new Error(`${label} expectedStartLineMatch must be "exact" or "trim"`);
+  return mode;
+}
+
+function expectedLineMatches(actual: string, expectedStartLine: string, mode: ExpectedStartLineMatch): boolean {
+  return mode === "trim" ? actual.trim() === expectedStartLine.trim() : actual === expectedStartLine;
+}
+
+function leadingIndent(line: string): string {
+  return line.match(/^[\t ]*/)?.[0] ?? "";
+}
+
+function withPreservedIndent(lines: string[], indent: string): string[] {
+  return lines.map((line) => line === "" ? line : `${indent}${line}`);
+}
+
+function expectedLineHint(lines: string[], expectedStartLine: string, mode: ExpectedStartLineMatch): string {
   const matches: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i] === expectedStartLine) matches.push(i + 1);
+    if (expectedLineMatches(lines[i]!, expectedStartLine, mode)) matches.push(i + 1);
   }
   if (matches.length === 0) return "";
 
@@ -58,18 +77,23 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
   const resolved = edits.map((edit, index) => validateLineRange(lines.length, edit, `edit[${index}]`));
 
   for (let index = 0; index < edits.length; index++) {
-    const expectedStartLine = edits[index]!.expectedStartLine;
+    const edit = edits[index]!;
+    const expectedStartLine = edit.expectedStartLine;
+    const matchMode = expectedLineMatchMode(edit, `edit[${index}]`);
+    const resolvedEdit = resolved[index]!;
 
-    const actual = lines[resolved[index]!.startLine - 1] ?? "";
-    if (actual !== expectedStartLine) {
-      const hint = expectedLineHint(lines, expectedStartLine);
+    const actual = lines[resolvedEdit.startLine - 1] ?? "";
+    if (!expectedLineMatches(actual, expectedStartLine, matchMode)) {
+      const hint = expectedLineHint(lines, expectedStartLine, matchMode);
       throw new Error(
         [
-          `edit[${index}] expectedStartLine mismatch at line ${resolved[index]!.startLine}; no edits were applied.`,
+          `edit[${index}] expectedStartLine mismatch at line ${resolvedEdit.startLine}; no edits were applied.`,
           hint || "Read the file to see current content.",
         ].join("\n"),
       );
     }
+
+    if (edit.preserveIndent) resolvedEdit.lines = withPreservedIndent(resolvedEdit.lines, leadingIndent(actual));
   }
 
   const ranges = resolved.map((edit) => [edit.startLine, edit.endLine] as const).sort((a, b) => a[0] - b[0]);

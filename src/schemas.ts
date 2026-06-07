@@ -10,7 +10,9 @@ export const QuickEditParams = Type.Object({
     Type.Object({
       start: Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF." }),
       end: Type.Optional(Type.Integer({ minimum: 1, description: "Optional 1-indexed inclusive end line number." })),
-      expectedStartLine: Type.String({ description: "Required exact guard for the current start line. Does not check the full range." }),
+      expectedStartLine: Type.String({ description: "Guard for the current start line. Exact by default; set expectedStartLineMatch=trim to ignore leading/trailing whitespace." }),
+      expectedStartLineMatch: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], { description: "How to compare expectedStartLine to the current start line. Defaults to exact; trim ignores leading/trailing whitespace." })),
+      preserveIndent: Type.Optional(Type.Boolean({ description: "When true, prefixes the current start line indentation to each non-empty replacement line. Use unindented replacement lines." })),
       lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it." }),
     }),
     { minItems: 1, description: "Line-number edits to apply atomically. Use start=lineCount+1 with no end to insert at EOF." },
@@ -105,5 +107,7 @@ export type Edit = {
   start: number;
   end?: number;
   expectedStartLine: string;
+  expectedStartLineMatch?: "exact" | "trim";
+  preserveIndent?: boolean;
   lines: string[];
 };

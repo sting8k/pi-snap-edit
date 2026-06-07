@@ -106,6 +106,33 @@ describe("quick edits", () => {
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
 
+  it("keeps exact expectedStartLine matching by default", async () => {
+    const file = await tempFile("sample.txt", "  value = false\n");
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "value = false", lines: ["value = true"] }]),
+      /expectedStartLine mismatch/,
+    );
+    assert.equal(await readFile(file, "utf8"), "  value = false\n");
+  });
+
+  it("supports trimmed guards with preserved indentation", async () => {
+    const file = await tempFile("sample.txt", "function run() {\n\tif (enabled) {\n\t\toldCall();\n\t}\n}\n");
+
+    await applyQuickEdits(file, [
+      {
+        start: 2,
+        end: 4,
+        expectedStartLine: "if (enabled) {",
+        expectedStartLineMatch: "trim",
+        preserveIndent: true,
+        lines: ["if (ready) {", "  newCall();", "}"],
+      },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n\tif (ready) {\n\t  newCall();\n\t}\n}\n");
+  });
+
   it("shows nearby context when expectedStartLine moved elsewhere", async () => {
     const file = await tempFile("sample.txt", "one\ninserted\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\n");
 
