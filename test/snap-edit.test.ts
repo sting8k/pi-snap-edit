@@ -8,6 +8,7 @@ import snapEditExtension, {
   applySubstituteEdits,
   applyTargetEdits,
   splitLines,
+  numberReadText,
   summarizeQuickEditOutput,
   preferQuickEditTools,
   type Edit,
@@ -44,6 +45,14 @@ describe("text helpers", () => {
     assert.deepEqual(splitLines("one\n"), ["one"]);
     assert.deepEqual(splitLines("one\ntwo"), ["one", "two"]);
     assert.deepEqual(splitLines("one\r\ntwo\r\n"), ["one", "two"]);
+  });
+
+  it("numbers CRLF read output without hidden carriage returns", () => {
+    assert.equal(numberReadText("one\r\ntwo\r\n"), "1| one\n2| two");
+    assert.equal(
+      numberReadText("one\r\ntwo\r\n\n[Showing lines 1-2 of 3. Use offset=3 to continue.]", { totalLineCount: 3 }),
+      "1| one\n2| two\n\n[Showing lines 1-2 of 3. Use offset=3 to continue.]",
+    );
   });
 });
 
@@ -140,6 +149,18 @@ describe("quick edits", () => {
     await applyQuickEdits(file, [editFor(original, 2, 2, ["SECOND", "inserted"])]);
 
     assert.equal(await readFile(file, "utf8"), "first\r\nSECOND\r\ninserted\r\nthird");
+  });
+
+  it("accepts expectedStartLine copied from numbered CRLF read output", async () => {
+    const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree\r\n");
+    const numbered = numberReadText(await readFile(file, "utf8"));
+    const expectedStartLine = numbered.split("\n")[1]!.replace(/^\s*\d+\| /, "");
+
+    assert.equal(expectedStartLine, "two");
+
+    await applyQuickEdits(file, [{ start: 2, expectedStartLine, lines: ["TWO"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree\r\n");
   });
 
   it("inserts at EOF with start equal to lineCount plus one", async () => {
