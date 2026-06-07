@@ -1,3 +1,29 @@
+## pi-snap-edit v3.0.3
+
+Patch release. Fixes read hook line numbering for CRLF files so `quick_edit` guards copied from `read` output do not include hidden carriage returns.
+
+### Changes
+
+- Normalized `read` hook line splitting through the shared `splitLines` helper.
+- Fixed CRLF read output so numbered lines no longer retain hidden `\r` characters.
+- Preserved continuation notice handling for CRLF read output.
+- Added regression tests for CRLF numbered reads and `quick_edit` expectedStartLine guards copied from read output.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (33 tests).
+- `git diff --check` passed.
+- `npm pack --dry-run` passed.
+
+---
+
 ## pi-snap-edit v3.0.0
 
 Breaking release. Temporarily disables the callable `substitute_edit` tool while keeping its engine/export available for compatibility and rollback.
