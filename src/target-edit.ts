@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
-import type { TargetEditOp, TargetEditScopeInput } from "./schemas.js";
+import type { TargetEditOp, TargetInsertBeforeOp, TargetInsertAfterOp } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
 type LineState = {
@@ -11,11 +11,8 @@ type LineState = {
 type Occurrence = {
   start: number;
   end: number;
-};
-
-type ScopeRange = {
-  start: number;
-  end: number;
+  startLine: number;
+  endLine: number;
 };
 
 function toNormalized(state: LineState): string {
@@ -52,57 +49,111 @@ function lineIndexAt(offsets: number[], lines: string[], offset: number): number
   return Math.min(index, lines.length - 1);
 }
 
-function validateScope(lines: string[], textLength: number, scope: TargetEditScopeInput | undefined): ScopeRange {
-  if (scope === undefined) return { start: 0, end: textLength };
-  const { startLine, endLine } = scope;
-  if (!Number.isInteger(startLine) || startLine < 1) throw new Error("scope.startLine must be a 1-indexed line number");
-  if (!Number.isInteger(endLine) || endLine < 1) throw new Error("scope.endLine must be a 1-indexed line number");
-  if (endLine < startLine) throw new Error(`invalid scope: lines ${startLine}-${endLine} (endLine < startLine)`);
-  if (startLine > lines.length || endLine > lines.length) {
-    throw new Error(`scope ${startLine}-${endLine} is out of bounds for file with ${lines.length} line(s)`);
-  }
-
-  const offsets = lineStartOffsets(lines);
-  return {
-    start: offsets[startLine - 1]!,
-    end: offsets[endLine - 1]! + lines[endLine - 1]!.length,
-  };
-}
-
-function findOccurrences(text: string, target: string, scope: ScopeRange): Occurrence[] {
+function findOccurrences(text: string, target: string): Occurrence[] {
   const occurrences: Occurrence[] = [];
-  let index = text.indexOf(target, scope.start);
-  while (index !== -1 && index + target.length <= scope.end) {
-    occurrences.push({ start: index, end: index + target.length });
+  let index = text.indexOf(target);
+  while (index !== -1) {
+    occurrences.push({ start: index, end: index + target.length, startLine: 0, endLine: 0 });
     index = text.indexOf(target, index + target.length);
   }
   return occurrences;
 }
 
-function selectedOccurrences(op: TargetEditOp, text: string, scope: ScopeRange, index: number): Occurrence[] {
-  const hasOccurrence = op.occurrence !== undefined;
-  const hasCount = op.count !== undefined;
-  if (hasOccurrence === hasCount) throw new Error(`op[${index}] must provide exactly one of occurrence or count`);
+function resolveOccurrenceLines(occurrences: Occurrence[], lines: string[], offsets: number[]): void {
+  for (const occurrence of occurrences) {
+    occurrence.startLine = lineIndexAt(offsets, lines, occurrence.start);
+    occurrence.endLine = lineIndexAt(offsets, lines, Math.max(occurrence.end - 1, occurrence.start));
+  }
+}
+
+function formatOccurrenceLines(occurrences: Occurrence[], lines: string[]): string {
+  if (occurrences.length === 0) return "";
+  const parts = occurrences.map((o) => `line ${o.startLine + 1}: ${lines[o.startLine]!.slice(0, 80)}`);
+  return "\noccurrences:\n" + parts.map((p) => "  " + p).join("\n");
+}
+function validateLineSelector(line: unknown, lineCount: number, index: number): number {
+  if (typeof line !== "number" || !Number.isInteger(line) || line < 1) {
+    throw new Error(`op[${index}] line must be a 1-indexed line number`);
+  }
+  if (line > lineCount) {
+    throw new Error(`op[${index}] line ${line} is out of bounds for file with ${lineCount} line(s)`);
+  }
+  return line - 1;
+}
+
+function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], offsets: number[], index: number): Occurrence[] {
   if (op.target.length === 0) throw new Error(`op[${index}] target must not be empty`);
-  if (op.target.includes("\r")) throw new Error(`op[${index}] target must use \n line endings, not \r`);
+  if (op.target.includes("\r")) throw new Error(`op[${index}] target must use \\n line endings, not \\r`);
 
-  const occurrences = findOccurrences(text, op.target, scope);
-  if (hasOccurrence) {
-    const occurrence = op.occurrence!;
-    if (!Number.isInteger(occurrence) || occurrence < 1) throw new Error(`op[${index}] occurrence must be a positive integer`);
-    const match = occurrences[occurrence - 1];
-    if (match === undefined) {
-      throw new Error(`op[${index}] expected occurrence ${occurrence} of ${JSON.stringify(op.target)} but found ${occurrences.length}`);
+  const all = findOccurrences(text, op.target);
+  if (all.length === 0) throw new Error(`op[${index}] target not found: ${JSON.stringify(op.target)}`);
+  resolveOccurrenceLines(all, lines, offsets);
+
+  if (op.type === "insert_before" || op.type === "insert_after") {
+    const targetLine = validateLineSelector(op.line, lines.length, index);
+    const matches = all.filter((o) => o.startLine <= targetLine && o.endLine >= targetLine);
+    if (matches.length === 0) {
+      throw new Error(
+        `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0` +
+          formatOccurrenceLines(all, lines),
+      );
     }
-    return [match];
+    if (matches.length > 1) {
+      throw new Error(
+        `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found ${matches.length}` +
+          formatOccurrenceLines(matches, lines),
+      );
+    }
+    return [matches[0]!];
   }
 
-  const count = op.count!;
-  if (!Number.isInteger(count) || count < 1) throw new Error(`op[${index}] count must be a positive integer`);
-  if (occurrences.length !== count) {
-    throw new Error(`op[${index}] expected ${count} occurrence(s) of ${JSON.stringify(op.target)} but found ${occurrences.length}`);
+  const hasLine = op.line !== undefined;
+  const hasRange = op.range !== undefined;
+  if (hasLine === hasRange) {
+    throw new Error(`op[${index}] must provide exactly one of line or range`);
   }
-  return occurrences;
+
+  if (hasLine) {
+    const targetLine = validateLineSelector(op.line, lines.length, index);
+    const matches = all.filter((o) => o.startLine <= targetLine && o.endLine >= targetLine);
+    if (matches.length === 0) {
+      throw new Error(
+        `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0` +
+          formatOccurrenceLines(all, lines),
+      );
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found ${matches.length}` +
+          formatOccurrenceLines(matches, lines),
+      );
+    }
+    return [matches[0]!];
+  }
+
+  const range = op.range!;
+  if (!Number.isInteger(range.startLine) || range.startLine < 1) {
+    throw new Error(`op[${index}] range.startLine must be a 1-indexed line number`);
+  }
+  if (!Number.isInteger(range.endLine) || range.endLine < 1) {
+    throw new Error(`op[${index}] range.endLine must be a 1-indexed line number`);
+  }
+  if (range.endLine < range.startLine) {
+    throw new Error(`op[${index}] invalid range: lines ${range.startLine}-${range.endLine} (endLine < startLine)`);
+  }
+  if (range.startLine > lines.length || range.endLine > lines.length) {
+    throw new Error(`op[${index}] range ${range.startLine}-${range.endLine} is out of bounds for file with ${lines.length} line(s)`);
+  }
+  const rangeStart = range.startLine - 1;
+  const rangeEnd = range.endLine - 1;
+  const matches = all.filter((o) => o.startLine >= rangeStart && o.endLine <= rangeEnd);
+  if (matches.length === 0) {
+    throw new Error(
+      `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0` +
+        formatOccurrenceLines(all, lines),
+    );
+  }
+  return matches;
 }
 
 function replaceRanges(text: string, occurrences: Occurrence[], replacement: string): string {
@@ -150,12 +201,19 @@ function rebasePriorDiffs(diffs: EditDiff[], shiftStartLine: number, delta: numb
   }
 }
 
+function unknownTypeError(op: TargetEditOp, index: number): Error {
+  return new Error(`op[${index}] unknown type: ${JSON.stringify((op as { type?: unknown }).type)}`);
+}
+
 function validatePayload(op: TargetEditOp, index: number): void {
+  if (op.type !== "replace" && op.type !== "delete" && op.type !== "insert_before" && op.type !== "insert_after") {
+    throw unknownTypeError(op, index);
+  }
   if (op.type === "replace") {
-    if (op.replacement.includes("\r")) throw new Error(`op[${index}] replacement must use \n line endings, not \r`);
+    if (op.replacement.includes("\r")) throw new Error(`op[${index}] replacement must use \\n line endings, not \\r`);
     if (op.replacement === op.target) throw new Error(`op[${index}] replacement must differ from target`);
   }
-  if (op.type === "insert") {
+  if (op.type === "insert_before" || op.type === "insert_after") {
     if (op.lines.length === 0) throw new Error(`op[${index}] lines must contain at least one line`);
     for (const [lineIndex, line] of op.lines.entries()) {
       if (line.includes("\n") || line.includes("\r")) throw new Error(`op[${index}] lines[${lineIndex}] must not contain line endings`);
@@ -163,17 +221,15 @@ function validatePayload(op: TargetEditOp, index: number): void {
   }
 }
 
-function applyInsert(state: LineState, occurrences: Occurrence[], op: Extract<TargetEditOp, { type: "insert" }>): LineState {
-  const offsets = lineStartOffsets(state.lines);
-  const insertions = occurrences.map((occurrence) => {
-    const startLine = lineIndexAt(offsets, state.lines, occurrence.start);
-    const endLine = lineIndexAt(offsets, state.lines, Math.max(occurrence.end - 1, occurrence.start));
-    return op.position === "before" ? startLine : endLine + 1;
-  });
-
+function applyInsert(
+  state: LineState,
+  occurrences: Occurrence[],
+  op: TargetInsertBeforeOp | TargetInsertAfterOp,
+): LineState {
   const lines = [...state.lines];
-  for (const lineIndex of [...insertions].sort((a, b) => b - a)) {
-    lines.splice(lineIndex, 0, ...op.lines);
+  for (const occurrence of [...occurrences].sort((a, b) => b.startLine - a.startLine)) {
+    const insertIndex = op.type === "insert_before" ? occurrence.startLine : occurrence.endLine + 1;
+    lines.splice(insertIndex, 0, ...op.lines);
   }
   return { lines, trailingNewline: state.trailingNewline };
 }
@@ -181,7 +237,6 @@ function applyInsert(state: LineState, occurrences: Occurrence[], op: Extract<Ta
 export async function applyTargetEdits(
   absolutePath: string,
   ops: TargetEditOp[],
-  scope?: TargetEditScopeInput,
 ): Promise<string> {
   if (ops.length === 0) throw new Error("ops must contain at least one target edit");
 
@@ -194,14 +249,22 @@ export async function applyTargetEdits(
     validatePayload(op, index);
     const beforeLines = state.lines;
     const text = toNormalized(state);
-    const range = validateScope(state.lines, text.length, scope);
-    const occurrences = selectedOccurrences(op, text, range, index);
+    const offsets = lineStartOffsets(state.lines);
+    const occurrences = selectedOccurrences(op, text, state.lines, offsets, index);
 
-    if (op.type === "insert") {
-      state = applyInsert(state, occurrences, op);
-    } else {
-      const replacement = op.type === "replace" ? op.replacement : "";
-      state = fromNormalized(replaceRanges(text, occurrences, replacement));
+    switch (op.type) {
+      case "insert_before":
+      case "insert_after":
+        state = applyInsert(state, occurrences, op);
+        break;
+      case "replace":
+        state = fromNormalized(replaceRanges(text, occurrences, op.replacement));
+        break;
+      case "delete":
+        state = fromNormalized(replaceRanges(text, occurrences, ""));
+        break;
+      default:
+        throw unknownTypeError(op, index);
     }
 
     const diff = diffLines(beforeLines, state.lines);

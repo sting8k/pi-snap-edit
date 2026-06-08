@@ -14,7 +14,7 @@ export { formatHash, hashLines, lineHash } from "./anchors.js";
 export { preferQuickEditTools } from "./active-tools.js";
 export { getFileStatSnapshot } from "./file-stat.js";
 export { applyQuickEdits } from "./quick-edit.js";
-export type { Edit, Substitution, TargetEditOp, TargetEditScopeInput } from "./schemas.js";
+export type { Edit, Substitution, TargetEditOp } from "./schemas.js";
 export { summarizeQuickEditOutput } from "./render.js";
 export { splitLines } from "./text.js";
 export { applySubstituteEdits } from "./substitute-edit.js";
@@ -82,20 +82,20 @@ export default function (pi: ExtensionAPI) {
     label: "target-edit",
     description:
       "Edit by finding exact target text, then replace it, delete it, or insert full lines before/after the line(s) containing it. Atomic: any invalid operation rejects the whole batch.",
-    promptSnippet: "Edit by exact target text with occurrence/count guards",
+    promptSnippet: "Edit by exact target text with line or range selectors",
     promptGuidelines: [
       "Use target_edit when you know an exact marker/text but line numbers are inconvenient.",
       "Use exact literal target text only; no regex. Use \\n for multi-line targets and replacements.",
-      "Every op must provide exactly one selector: occurrence for the Nth match, or count for exactly N matches.",
-      "Use replace for inline or multi-line text replacement, delete for exact target removal, and insert for adding full lines before/after the line(s) containing target.",
-      "Use optional scope.startLine/endLine to constrain matching when the file has repeated text.",
+      "Use line to select the single occurrence intersecting that line. Use range to replace/delete every occurrence fully inside an inclusive line range.",
+      "For inserts, use insert_before or insert_after with the line where target appears.",
+      "Use replace for inline or multi-line text replacement, delete for exact target removal, insert_before for adding lines before, and insert_after for adding lines after.",
       "Batch operations are ordered in memory and written atomically only after all operations validate.",
     ],
     parameters: TargetEditParams,
 
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const absolutePath = resolvePath(ctx.cwd, params.path);
-      const text = await withFileMutationQueue(absolutePath, () => applyTargetEdits(absolutePath, params.ops, params.scope));
+      const text = await withFileMutationQueue(absolutePath, () => applyTargetEdits(absolutePath, params.ops));
       return { content: [{ type: "text" as const, text }], details: undefined };
     },
 

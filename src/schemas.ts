@@ -33,36 +33,49 @@ export const SubstituteEditParams = Type.Object({
   ),
 });
 
-export const TargetEditScope = Type.Object({
-  startLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive scope start line." }),
-  endLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive scope end line." }),
+const LineRange = Type.Object({
+  startLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line." }),
+  endLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive end line." }),
 });
 
-const TargetSelectorFields = {
+const TargetBase = {
   target: Type.String({ minLength: 1, description: "Exact literal target text to find. Use \\n for multi-line targets." }),
-  occurrence: Type.Optional(Type.Integer({ minimum: 1, description: "Apply to the Nth occurrence of target." })),
-  count: Type.Optional(Type.Integer({ minimum: 1, description: "Apply to exactly this many occurrences of target." })),
 };
 
 export const TargetEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
-  scope: Type.Optional(TargetEditScope),
   ops: Type.Array(
     Type.Union([
       Type.Object({
         type: Type.Literal("replace"),
-        ...TargetSelectorFields,
+        ...TargetBase,
+        line: Type.Optional(Type.Integer({ minimum: 1, description: "1-indexed line where target must appear. Must find exactly 1 occurrence intersecting this line." })),
+        range: Type.Optional(Type.Object({
+          startLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line." }),
+          endLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive end line." }),
+        }, { description: "Inclusive line range; replaces every occurrence fully inside the range." })),
         replacement: Type.String({ description: "Replacement text. Use \\n for multi-line replacements." }),
       }),
       Type.Object({
-        type: Type.Literal("insert"),
-        ...TargetSelectorFields,
-        position: Type.Union([Type.Literal("before"), Type.Literal("after")], { description: "Insert lines before or after the line(s) containing target." }),
-        lines: Type.Array(Type.String(), { minItems: 1, description: "Full lines to insert." }),
+        type: Type.Literal("delete"),
+        ...TargetBase,
+        line: Type.Optional(Type.Integer({ minimum: 1, description: "1-indexed line where target must appear. Must find exactly 1 occurrence intersecting this line." })),
+        range: Type.Optional(Type.Object({
+          startLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line." }),
+          endLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive end line." }),
+        }, { description: "Inclusive line range; deletes every occurrence fully inside the range." })),
       }),
       Type.Object({
-        type: Type.Literal("delete"),
-        ...TargetSelectorFields,
+        type: Type.Literal("insert_before"),
+        ...TargetBase,
+        line: Type.Integer({ minimum: 1, description: "1-indexed line where target must appear. Must find exactly 1 occurrence intersecting this line." }),
+        lines: Type.Array(Type.String(), { minItems: 1, description: "Full lines to insert before the first line containing target." }),
+      }),
+      Type.Object({
+        type: Type.Literal("insert_after"),
+        ...TargetBase,
+        line: Type.Integer({ minimum: 1, description: "1-indexed line where target must appear. Must find exactly 1 occurrence intersecting this line." }),
+        lines: Type.Array(Type.String(), { minItems: 1, description: "Full lines to insert after the last line containing target." }),
       }),
     ]),
     { minItems: 1, description: "Ordered exact-target operations. Atomic: any invalid operation rejects the whole batch." },
@@ -75,33 +88,36 @@ export type Substitution = {
   count: number;
 };
 
-export type TargetSelector = {
-  target: string;
-  occurrence?: number;
-  count?: number;
-};
-
-export type TargetReplaceOp = TargetSelector & {
+export type TargetReplaceOp = {
   type: "replace";
+  target: string;
+  line?: number;
+  range?: { startLine: number; endLine: number };
   replacement: string;
 };
 
-export type TargetInsertOp = TargetSelector & {
-  type: "insert";
-  position: "before" | "after";
+export type TargetDeleteOp = {
+  type: "delete";
+  target: string;
+  line?: number;
+  range?: { startLine: number; endLine: number };
+};
+
+export type TargetInsertBeforeOp = {
+  type: "insert_before";
+  target: string;
+  line: number;
   lines: string[];
 };
 
-export type TargetDeleteOp = TargetSelector & {
-  type: "delete";
+export type TargetInsertAfterOp = {
+  type: "insert_after";
+  target: string;
+  line: number;
+  lines: string[];
 };
 
-export type TargetEditOp = TargetReplaceOp | TargetInsertOp | TargetDeleteOp;
-
-export type TargetEditScopeInput = {
-  startLine: number;
-  endLine: number;
-};
+export type TargetEditOp = TargetReplaceOp | TargetDeleteOp | TargetInsertBeforeOp | TargetInsertAfterOp;
 
 export type Edit = {
   start: number;

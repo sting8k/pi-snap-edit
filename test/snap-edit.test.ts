@@ -344,10 +344,10 @@ describe("substitute edits", () => {
 });
 
 describe("target edits", () => {
-  it("replaces exact target text by occurrence and returns numbered context", async () => {
+  it("replaces exact target text by line and returns numbered context", async () => {
     const file = await tempFile("sample.ts", "const app = createApp();\napp.mount('#app');\n");
     const result = await applyTargetEdits(file, [
-      { type: "replace", target: "app.mount('#app')", occurrence: 1, replacement: "app.mount('#root')" },
+      { type: "replace", target: "app.mount('#app')", line: 2, replacement: "app.mount('#root')" },
     ]);
 
     assert.equal(await readFile(file, "utf8"), "const app = createApp();\napp.mount('#root');\n");
@@ -357,16 +357,25 @@ describe("target edits", () => {
     assert.match(result, /1\| const app = createApp\(\);\n2\| app\.mount\('#root'\);/);
   });
 
-  it("inserts full lines before or after the line containing the target", async () => {
+  it("inserts full lines after the line containing the target", async () => {
     const file = await tempFile("sample.ts", "const app = createApp();\napp.mount('#app');\n");
     await applyTargetEdits(file, [
-      { type: "insert", target: "const app = createApp();", occurrence: 1, position: "after", lines: ["app.use(logger);"] },
+      { type: "insert_after", target: "const app = createApp();", line: 1, lines: ["app.use(logger);"] },
     ]);
 
     assert.equal(await readFile(file, "utf8"), "const app = createApp();\napp.use(logger);\napp.mount('#app');\n");
   });
 
-  it("deletes multi-line target text", async () => {
+  it("inserts full lines before the line containing the target", async () => {
+    const file = await tempFile("sample.ts", "const app = createApp();\napp.mount('#app');\n");
+    await applyTargetEdits(file, [
+      { type: "insert_before", target: "app.mount('#app');", line: 2, lines: ["app.use(logger);"] },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "const app = createApp();\napp.use(logger);\napp.mount('#app');\n");
+  });
+
+  it("deletes multi-line target text by line", async () => {
     const original = [
       "before",
       "if (debug) {",
@@ -377,33 +386,124 @@ describe("target edits", () => {
     const file = await tempFile("sample.ts", original);
 
     await applyTargetEdits(file, [
-      { type: "delete", target: "if (debug) {\n  console.log(value);\n}\n", occurrence: 1 },
+      { type: "delete", target: "if (debug) {\n  console.log(value);\n}\n", line: 2 },
     ]);
 
     assert.equal(await readFile(file, "utf8"), "before\nafter");
   });
 
-  it("uses scope and count to edit repeated targets safely", async () => {
-    const file = await tempFile("sample.ts", "one();\ntarget();\ntwo();\ntarget();\n");
-    await applyTargetEdits(
-      file,
-      [{ type: "replace", target: "target()", count: 1, replacement: "selected()" }],
-      { startLine: 3, endLine: 4 },
-    );
+  it("replaces every occurrence inside a line range", async () => {
+    const file = await tempFile("sample.ts", [
+      "one();",
+      "target();",
+      "two();",
+      "target();",
+      "three();",
+    ].join("\n") + "\n");
+    await applyTargetEdits(file, [
+      { type: "replace", target: "target()", range: { startLine: 3, endLine: 5 }, replacement: "selected()" },
+    ]);
 
-    assert.equal(await readFile(file, "utf8"), "one();\ntarget();\ntwo();\nselected();\n");
+    assert.equal(await readFile(file, "utf8"), "one();\ntarget();\ntwo();\nselected();\nthree();\n");
   });
 
-  it("rejects selector/count failures atomically", async () => {
+  it("deletes every occurrence inside a line range", async () => {
+    const file = await tempFile("sample.ts", [
+      "a();",
+      "target();",
+      "b();",
+      "target();",
+      "c();",
+    ].join("\n") + "\n");
+    await applyTargetEdits(file, [
+      { type: "delete", target: "target();\n", range: { startLine: 2, endLine: 4 } },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "a();\nb();\nc();\n");
+  });
+
+  it("rejects missing target with occurrence list", async () => {
+    const file = await tempFile("sample.txt", "alpha\nbeta\ngamma\n");
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "delta", line: 1, replacement: "DELTA" },
+      ]),
+      /target not found/
+    );
+  });
+
+  it("rejects ambiguous line with occurrence list", async () => {
+    const file = await tempFile("sample.txt", "a\nwrap(wrap)\nb\n");
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "wrap", line: 2, replacement: "WRAP" },
+      ]),
+      /expected 1 occurrence.*on line 2 but found 2/
+    );
+  });
+  it("rejects invalid line selectors and unknown op types", async () => {
+    const original = "one\ntarget\nthree\n";
+    const file = await tempFile("sample.txt", original);
+
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "target", line: "2", replacement: "TARGET" } as any,
+      ]),
+      /line must be a 1-indexed line number/
+    );
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "target", line: 99, replacement: "TARGET" },
+      ]),
+      /out of bounds/
+    );
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "deleet", target: "target", line: 2 } as any,
+      ]),
+      /unknown type/
+    );
+    assert.equal(await readFile(file, "utf8"), original);
+  });
+
+  it("rejects invalid ranges", async () => {
+    const file = await tempFile("sample.txt", "one\ntarget\nthree\n");
+
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "target", range: { startLine: 3, endLine: 2 }, replacement: "TARGET" },
+      ]),
+      /invalid range/
+    );
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "target", range: { startLine: 1, endLine: 999 }, replacement: "TARGET" },
+      ]),
+      /out of bounds/
+    );
+    assert.equal(await readFile(file, "utf8"), "one\ntarget\nthree\n");
+  });
+
+  it("rejects range with no matches", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "four", range: { startLine: 1, endLine: 3 }, replacement: "FOUR" },
+      ]),
+      /target not found/
+    );
+  });
+
+  it("rejects selector failures atomically", async () => {
     const original = "alpha\nbeta\ngamma\n";
     const file = await tempFile("sample.txt", original);
 
     await assert.rejects(
       async () => applyTargetEdits(file, [
-        { type: "replace", target: "alpha", occurrence: 1, replacement: "ALPHA" },
-        { type: "replace", target: "missing", occurrence: 1, replacement: "MISSING" },
+        { type: "replace", target: "alpha", line: 1, replacement: "ALPHA" },
+        { type: "replace", target: "missing", line: 2, replacement: "MISSING" },
       ]),
-      /op\[1\] expected occurrence 1/,
+      /target not found/
     );
     assert.equal(await readFile(file, "utf8"), original);
   });
@@ -411,25 +511,20 @@ describe("target edits", () => {
   it("preserves CRLF and no-trailing-newline files", async () => {
     const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree");
     await applyTargetEdits(file, [
-      { type: "insert", target: "two", occurrence: 1, position: "after", lines: ["TWO-AND-A-HALF"] },
-      { type: "replace", target: "three", occurrence: 1, replacement: "THREE" },
+      { type: "insert_after", target: "two", line: 2, lines: ["TWO-AND-A-HALF"] },
+      { type: "replace", target: "three", line: 4, replacement: "THREE" },
     ]);
 
     assert.equal(await readFile(file, "utf8"), "one\r\ntwo\r\nTWO-AND-A-HALF\r\nTHREE");
   });
+
   it("reports earlier changes at final line positions after later line-shifting ops", async () => {
     const original = Array.from({ length: 12 }, (_, index) => `line${index + 1}`);
     const file = await tempFile("sample.txt", `${original.join("\n")}\n`);
 
     const result = await applyTargetEdits(file, [
-      { type: "replace", target: "line10", occurrence: 1, replacement: "LINE10" },
-      {
-        type: "insert",
-        target: "line1",
-        occurrence: 1,
-        position: "before",
-        lines: Array.from({ length: 10 }, (_, index) => `inserted-${index + 1}`),
-      },
+      { type: "replace", target: "line10", line: 10, replacement: "LINE10" },
+      { type: "insert_before", target: "line1", line: 1, lines: Array.from({ length: 10 }, (_, index) => `inserted-${index + 1}`) },
     ]);
 
     assert.equal(
