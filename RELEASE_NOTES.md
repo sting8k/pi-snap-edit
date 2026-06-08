@@ -1,3 +1,34 @@
+## pi-snap-edit v4.0.0
+
+Breaking API cleanup release. Simplifies `target_edit` selectors and op types, improves `quick_edit` guard flexibility, and adds diagnostic fuzzy hints on edit failures.
+
+### Changes
+
+- **`target_edit` breaking cleanup:** removed `occurrence`/`count`/`position` params. Replaced with `line`/`range` selectors and `insert_before`/`insert_after` op types. Removed top-level `scope`.
+- **`quick_edit` trim guard:** added `expectedStartLineMatch: "trim"` and `preserveIndent: true` to handle whitespace uncertainty without failing.
+- **Diagnostic fuzzy hints:** when `quick_edit` guard or `target_edit` target fails to match, the tool now lists close matches with line numbers and snippets for faster retry.
+- **Runtime validation:** `line` and `range` selectors now validate integer/min/bounds/order. Unknown op types are explicitly rejected.
+
+### Breaking Changes
+
+- `target_edit` no longer supports `occurrence`, `count`, `position`, or top-level `scope`.
+- `target_edit` `insert` + `position` replaced by `insert_before` and `insert_after`.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (44 tests).
+- `git diff --check` passed.
+- `npm pack --dry-run` passed.
+
+---
+
 ## pi-snap-edit v3.0.3
 
 Patch release. Fixes read hook line numbering for CRLF files so `quick_edit` guards copied from `read` output do not include hidden carriage returns.
