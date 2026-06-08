@@ -81,7 +81,7 @@ export default function (pi: ExtensionAPI) {
     name: "target_edit",
     label: "target-edit",
     description:
-      "Edit by finding exact target text, then replace it, delete it, or insert full lines before/after the line(s) containing it. Atomic: any invalid operation rejects the whole batch.",
+      "Edit by finding exact target text, then use replace/delete or insert_before/insert_after. Atomic: any invalid operation rejects the whole batch.",
     promptSnippet: "Edit by exact target text with line or range selectors",
     promptGuidelines: [
       "Use target_edit when you know an exact marker/text but line numbers are inconvenient.",

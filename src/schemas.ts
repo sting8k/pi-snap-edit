@@ -47,7 +47,7 @@ export const TargetEditParams = Type.Object({
   ops: Type.Array(
     Type.Union([
       Type.Object({
-        type: Type.Literal("replace"),
+        type: Type.Literal("replace", { description: "Replace exact target text." }),
         ...TargetBase,
         line: Type.Optional(Type.Integer({ minimum: 1, description: "1-indexed line where target must appear. Must find exactly 1 occurrence intersecting this line." })),
         range: Type.Optional(Type.Object({
@@ -57,7 +57,7 @@ export const TargetEditParams = Type.Object({
         replacement: Type.String({ description: "Replacement text. Use \\n for multi-line replacements." }),
       }),
       Type.Object({
-        type: Type.Literal("delete"),
+        type: Type.Literal("delete", { description: "Delete exact target text." }),
         ...TargetBase,
         line: Type.Optional(Type.Integer({ minimum: 1, description: "1-indexed line where target must appear. Must find exactly 1 occurrence intersecting this line." })),
         range: Type.Optional(Type.Object({
@@ -66,13 +66,13 @@ export const TargetEditParams = Type.Object({
         }, { description: "Inclusive line range; deletes every occurrence fully inside the range." })),
       }),
       Type.Object({
-        type: Type.Literal("insert_before"),
+        type: Type.Literal("insert_before", { description: "Insert full lines before the target occurrence." }),
         ...TargetBase,
         line: Type.Integer({ minimum: 1, description: "1-indexed line where target must appear. Must find exactly 1 occurrence intersecting this line." }),
         lines: Type.Array(Type.String(), { minItems: 1, description: "Full lines to insert before the first line containing target." }),
       }),
       Type.Object({
-        type: Type.Literal("insert_after"),
+        type: Type.Literal("insert_after", { description: "Insert full lines after the target occurrence." }),
         ...TargetBase,
         line: Type.Integer({ minimum: 1, description: "1-indexed line where target must appear. Must find exactly 1 occurrence intersecting this line." }),
         lines: Type.Array(Type.String(), { minItems: 1, description: "Full lines to insert after the last line containing target." }),
