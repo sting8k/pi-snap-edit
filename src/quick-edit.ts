@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
 import { getFileStatSnapshot } from "./file-stat.js";
+import { formatCloseLineMatches } from "./fuzzy.js";
 import type { Edit } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
@@ -49,13 +50,15 @@ function withPreservedIndent(lines: string[], indent: string): string[] {
   return lines.map((line) => line === "" ? line : `${indent}${line}`);
 }
 
-function expectedLineHint(lines: string[], expectedStartLine: string, mode: ExpectedStartLineMatch): string {
+function matchingLineNumbers(lines: string[], expectedStartLine: string, mode: ExpectedStartLineMatch): number[] {
   const matches: number[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (expectedLineMatches(lines[i]!, expectedStartLine, mode)) matches.push(i + 1);
   }
-  if (matches.length === 0) return "";
+  return matches;
+}
 
+function formatExpectedLineMatches(lines: string[], matches: number[], label: string, hint?: string): string {
   const shown = matches.slice(0, 5);
   const ranges = shown.map((lineNumber) => ({
     startIndex: Math.max(0, lineNumber - 1 - CONTEXT_LINES),
@@ -63,9 +66,30 @@ function expectedLineHint(lines: string[], expectedStartLine: string, mode: Expe
   }));
   const suffix = matches.length > shown.length ? ` (showing first ${shown.length} of ${matches.length})` : "";
   return [
-    `Expected start line found at line(s): ${shown.join(", ")}${suffix}.`,
+    `${label}: ${shown.join(", ")}${suffix}.`,
+    hint,
     formatContexts(lines, ranges),
-  ].join("\n");
+  ].filter(Boolean).join("\n");
+}
+
+function expectedLineHint(lines: string[], expectedStartLine: string, mode: ExpectedStartLineMatch): string {
+  const matches = matchingLineNumbers(lines, expectedStartLine, mode);
+  if (matches.length > 0) return formatExpectedLineMatches(lines, matches, "Expected start line found at line(s)");
+
+  if (mode === "exact") {
+    const trimMatches = matchingLineNumbers(lines, expectedStartLine, "trim");
+    if (trimMatches.length > 0) {
+      return formatExpectedLineMatches(
+        lines,
+        trimMatches,
+        "Expected start line matched by trim at line(s)",
+        "hint: use expectedStartLineMatch=\"trim\" if whitespace differs.",
+      );
+    }
+  }
+
+  const closeMatches = formatCloseLineMatches(lines, expectedStartLine, "Close start-line matches");
+  return closeMatches ? `${closeMatches}\nhint: use expectedStartLineMatch=\"trim\" if whitespace differs.` : "";
 }
 
 export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Promise<string> {

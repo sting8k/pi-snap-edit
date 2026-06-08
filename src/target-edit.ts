@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
+import { formatCloseLineMatches } from "./fuzzy.js";
 import type { TargetEditOp, TargetInsertBeforeOp, TargetInsertAfterOp } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
@@ -86,7 +87,10 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
   if (op.target.includes("\r")) throw new Error(`op[${index}] target must use \\n line endings, not \\r`);
 
   const all = findOccurrences(text, op.target);
-  if (all.length === 0) throw new Error(`op[${index}] target not found: ${JSON.stringify(op.target)}`);
+  if (all.length === 0) {
+    const closeMatches = formatCloseLineMatches(lines, op.target, "close target matches");
+    throw new Error([`op[${index}] target not found: ${JSON.stringify(op.target)}`, closeMatches].filter(Boolean).join("\n"));
+  }
   resolveOccurrenceLines(all, lines, offsets);
 
   if (op.type === "insert_before" || op.type === "insert_after") {

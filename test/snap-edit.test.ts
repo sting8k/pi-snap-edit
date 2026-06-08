@@ -106,12 +106,22 @@ describe("quick edits", () => {
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
 
+  it("suggests close start-line matches without editing", async () => {
+    const file = await tempFile("sample.txt", "const enabled = false;\n");
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "const enabled = fasle;", lines: ["const enabled = true;"] }]),
+      /Close start-line matches:[\s\S]*line 1: const enabled = false;[\s\S]*expectedStartLineMatch="trim"/,
+    );
+    assert.equal(await readFile(file, "utf8"), "const enabled = false;\n");
+  });
+
   it("keeps exact expectedStartLine matching by default", async () => {
     const file = await tempFile("sample.txt", "  value = false\n");
 
     await assert.rejects(
       () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "value = false", lines: ["value = true"] }]),
-      /expectedStartLine mismatch/,
+      /expectedStartLine mismatch[\s\S]*Expected start line matched by trim at line\(s\): 1\.[\s\S]*expectedStartLineMatch="trim"/,
     );
     assert.equal(await readFile(file, "utf8"), "  value = false\n");
   });
@@ -430,6 +440,19 @@ describe("target edits", () => {
       ]),
       /target not found/
     );
+  });
+
+  it("suggests close target matches when target is missing", async () => {
+    const original = "alpha\nconst enabled = false;\ngamma\n";
+    const file = await tempFile("sample.txt", original);
+
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "const enabled = fasle;", line: 2, replacement: "const enabled = true;" },
+      ]),
+      /target not found[\s\S]*close target matches:[\s\S]*line 2: const enabled = false;/
+    );
+    assert.equal(await readFile(file, "utf8"), original);
   });
 
   it("rejects ambiguous line with occurrence list", async () => {
