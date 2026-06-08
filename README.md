@@ -13,7 +13,7 @@ Pain points from agent workflow:
 - Indentation/whitespace mismatches cause `expectedStartLine` guard to fail despite visually matching content, requiring careful copy or the use of `expectedStartLineMatch: "trim"` + `preserveIndent: true`.
 - Most search tools (`rg -n`, `grep -n`, src maps) naturally return line numbers, not custom anchors.
 
-`pi-snap-edit` uses a narrower model: edit by line number with required start-line content guards, counted literal substitutions, or exact target text with line/range selectors. It trades whole-block exact matching and ad-hoc scripts for smaller, easier-to-review tool calls; re-read before editing when line positions may have shifted.
+`pi-snap-edit` uses a narrower model: edit by line number with required start-line content guards, or exact target text with line/range selectors. It trades whole-block exact matching and ad-hoc scripts for smaller, easier-to-review tool calls; re-read before editing when line positions may have shifted.
 
 ## Why not hash-line anchors
 
@@ -23,7 +23,7 @@ Earlier versions centered the main read-driven workflow on `<line>:<hash>|<conte
 
 `pi-snap-edit` currently registers `quick_edit` and `target_edit` as preferred active editing tools. Use line-numbered edits when target lines are known; use `target_edit` when the stable handle is exact text/marker content instead.
 
-| Need | Pi core edit tool | pi-snap-edit |
+| Need | Pi built-in edit | pi-snap-edit |
 | --- | --- | --- |
 | Small exact text replacement | Best when the exact old text is short and easy to quote | Use `target_edit` by exact target `line`/`range`, or `quick_edit` when line numbers are known |
 | Large block replacement | Requires sending the full exact old block | Replace by 1-indexed line/range with `quick_edit` |
@@ -40,12 +40,13 @@ Tool behavior:
 - `quick_edit` performs atomic line/range replacements using 1-indexed line numbers; requires `expectedStartLine` for each edit.
 - `expectedStartLine` guards the current `start` line only; it does not verify the full range or detect line shifts from insertions/deletions above.
 - `quick_edit` defaults to exact guard matching. Use `expectedStartLineMatch: "trim"` plus `preserveIndent: true` when indentation/trailing whitespace is uncertain and replacement lines should inherit the current line indentation.
-- `substitute_edit` registration is temporarily disabled; its engine remains exported for now.
+- `substitute_edit` registration is currently disabled; its engine remains exported for now.
 - `target_edit` performs ordered exact-target operations: `replace`, `delete`, `insert_before`, and `insert_after`.
 - `replace` and `delete` require exactly one selector: `line` for a single occurrence, or `range` for every occurrence fully inside an inclusive line range.
 - `insert_before` and `insert_after` require `line` and insert full lines before/after the target occurrence.
 - Line endings are preserved, including CRLF and no-trailing-newline files.
-- Invalid ranges, target misses, overlapping edits, and `expectedStartLine` mismatches are rejected without partial writes.
+- Invalid `quick_edit` ranges/overlaps, invalid `target_edit` selectors/ranges, target misses, and `expectedStartLine` mismatches are rejected without partial writes.
+- Failure hints may list moved/close matches with line numbers, but fuzzy hints are diagnostic-only and never applied automatically.
 
 ## `target_edit` quick shape
 
