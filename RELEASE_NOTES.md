@@ -1,3 +1,29 @@
+## pi-snap-edit v4.1.0
+
+Minor release. Improves escape-heavy edit matching and preserves UTF-8 BOM across edit tools and numbered read output.
+
+### Changes
+
+- **Escaped edit targets:** `quick_edit` `expectedStartLine` and `target_edit` `target` try raw match first, then JSON-style unescaped fallback (`\n`, `\t`, `\\`, etc.). Raw matches win over fallback to avoid double-apply on overlap.
+- **UTF-8 BOM preservation:** only one leading file-level BOM is tracked; `quick_edit`, `substitute_edit`, and `target_edit` preserve it on write. Read hook hides the file BOM on line 1 while keeping content `\uFEFF` characters visible.
+- **Tests:** added coverage for escape guards, raw-over-fallback selectors, and byte-level BOM cases.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (56 tests).
+- `git diff --check` passed.
+- `npm pack --dry-run` passed.
+- Live-tested `read`, `quick_edit`, and `target_edit` after Pi reload.
+
+---
+
 ## pi-snap-edit v4.0.0
 
 Breaking API cleanup release. Simplifies `target_edit` selectors and op types, improves `quick_edit` guard flexibility, and adds diagnostic fuzzy hints on edit failures.
