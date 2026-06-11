@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
 import { getFileStatSnapshot } from "./file-stat.js";
 import type { Substitution } from "./schemas.js";
-import { detectLineEnding, splitLines } from "./text.js";
+import { detectLineEnding, joinBom, splitBom, splitLines } from "./text.js";
 
 function countSubstring(text: string, needle: string): number {
   return needle.length === 0 ? 0 : text.split(needle).length - 1;
@@ -36,7 +36,8 @@ export async function applySubstituteEdits(
 
 
   const content = await fs.readFile(absolutePath, "utf8");
-  const lines = splitLines(content);
+  const source = splitBom(content);
+  const lines = splitLines(source.text);
   validateLineRange(lines.length, start, end);
 
   const updated = [...lines];
@@ -72,11 +73,11 @@ export async function applySubstituteEdits(
     }
   }
 
-  const lineEnding = detectLineEnding(content);
-  const hasTrailingNewline = content.endsWith("\n");
+  const lineEnding = detectLineEnding(source.text);
+  const hasTrailingNewline = source.text.endsWith("\n");
   let newContent = updated.join(lineEnding);
   if (hasTrailingNewline && updated.length > 0) newContent += lineEnding;
-  await fs.writeFile(absolutePath, newContent, "utf8");
+  await fs.writeFile(absolutePath, joinBom(newContent, source.bom), "utf8");
 
   const parts: string[] = [];
   const diff = formatDiffs(diffs);

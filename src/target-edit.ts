@@ -3,7 +3,7 @@ import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, format
 import { formatCloseLineMatches } from "./fuzzy.js";
 import { formatFailureMessage, unescapeLiteralSequences } from "./match-helpers.js";
 import type { TargetEditOp, TargetInsertBeforeOp, TargetInsertAfterOp } from "./schemas.js";
-import { detectLineEnding, splitLines } from "./text.js";
+import { detectLineEnding, joinBom, splitBom, splitLines } from "./text.js";
 
 type LineState = {
   lines: string[];
@@ -289,8 +289,9 @@ export async function applyTargetEdits(
   if (ops.length === 0) throw new Error("ops must contain at least one target edit");
 
   const content = await fs.readFile(absolutePath, "utf8");
-  const lineEnding = detectLineEnding(content);
-  let state: LineState = { lines: splitLines(content), trailingNewline: content.endsWith("\n") };
+  const source = splitBom(content);
+  const lineEnding = detectLineEnding(source.text);
+  let state: LineState = { lines: splitLines(source.text), trailingNewline: source.text.endsWith("\n") };
   const diffs: EditDiff[] = [];
 
   for (const [index, op] of ops.entries()) {
@@ -322,7 +323,7 @@ export async function applyTargetEdits(
     }
   }
 
-  await fs.writeFile(absolutePath, toFileContent(state, lineEnding), "utf8");
+  await fs.writeFile(absolutePath, joinBom(toFileContent(state, lineEnding), source.bom), "utf8");
 
   const parts: string[] = [];
   const diff = formatDiffs(diffs);
