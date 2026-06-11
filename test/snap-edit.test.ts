@@ -116,6 +116,14 @@ describe("quick edits", () => {
     assert.equal(await readFile(file, "utf8"), "const enabled = false;\n");
   });
 
+  it("accepts expectedStartLine with JSON escape sequences at guard time", async () => {
+    const file = await tempFile("sample.txt", "foo\tbar\n");
+
+    await applyQuickEdits(file, [{ start: 1, expectedStartLine: "foo\\tbar", lines: ["FOO"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "FOO\n");
+  });
+
   it("keeps exact expectedStartLine matching by default", async () => {
     const file = await tempFile("sample.txt", "  value = false\n");
 
@@ -440,6 +448,39 @@ describe("target edits", () => {
       ]),
       /target not found/
     );
+  });
+
+  it("finds multi-line target when JSON sends escaped newlines", async () => {
+    const file = await tempFile("sample.ts", "before\nif (debug) {\n  log();\n}\nafter\n");
+    await applyTargetEdits(file, [
+      {
+        type: "delete",
+        target: "if (debug) {\\n  log();\\n}\\n",
+        line: 2,
+      },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "before\nafter\n");
+  });
+
+  it("prefers raw target matches over unescaped fallback matches on a line", async () => {
+    const file = await tempFile("sample.txt", "path \\\\ server\n");
+
+    await applyTargetEdits(file, [
+      { type: "replace", target: "\\\\", line: 1, replacement: "/" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "path / server\n");
+  });
+
+  it("prefers raw target matches over unescaped fallback matches in a range", async () => {
+    const file = await tempFile("sample.txt", "\\\\x\n");
+
+    await applyTargetEdits(file, [
+      { type: "replace", target: "\\\\", range: { startLine: 1, endLine: 1 }, replacement: "ABC" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "ABCx\n");
   });
 
   it("suggests close target matches when target is missing", async () => {

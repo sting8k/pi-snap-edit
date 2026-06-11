@@ -2,6 +2,14 @@ import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
 import { getFileStatSnapshot } from "./file-stat.js";
 import { formatCloseLineMatches } from "./fuzzy.js";
+import {
+  escapeMismatchHint,
+  formatFailureMessage,
+  lineContentMatches,
+  matchingLineNumbers,
+  trimMismatchHint,
+  type ExpectedStartLineMatch,
+} from "./match-helpers.js";
 import type { Edit } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
@@ -11,8 +19,6 @@ type ResolvedEdit = {
   lines: string[];
   insert: boolean;
 };
-type ExpectedStartLineMatch = NonNullable<Edit["expectedStartLineMatch"]>;
-
 function validateLineRange(lineCount: number, edit: Edit, label: string): ResolvedEdit {
   const startLine = edit.start;
   if (!Number.isInteger(startLine) || startLine < 1) throw new Error(`${label} start must be a 1-indexed line number`);
@@ -38,24 +44,12 @@ function expectedLineMatchMode(edit: Edit, label: string): ExpectedStartLineMatc
   return mode;
 }
 
-function expectedLineMatches(actual: string, expectedStartLine: string, mode: ExpectedStartLineMatch): boolean {
-  return mode === "trim" ? actual.trim() === expectedStartLine.trim() : actual === expectedStartLine;
-}
-
 function leadingIndent(line: string): string {
   return line.match(/^[\t ]*/)?.[0] ?? "";
 }
 
 function withPreservedIndent(lines: string[], indent: string): string[] {
   return lines.map((line) => line === "" ? line : `${indent}${line}`);
-}
-
-function matchingLineNumbers(lines: string[], expectedStartLine: string, mode: ExpectedStartLineMatch): number[] {
-  const matches: number[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (expectedLineMatches(lines[i]!, expectedStartLine, mode)) matches.push(i + 1);
-  }
-  return matches;
 }
 
 function formatExpectedLineMatches(lines: string[], matches: number[], label: string, hint?: string): string {
@@ -72,9 +66,24 @@ function formatExpectedLineMatches(lines: string[], matches: number[], label: st
   ].filter(Boolean).join("\n");
 }
 
-function expectedLineHint(lines: string[], expectedStartLine: string, mode: ExpectedStartLineMatch): string {
+function expectedLineHint(
+  lines: string[],
+  expectedStartLine: string,
+  mode: ExpectedStartLineMatch,
+  startLine: number,
+): string {
+  const actualAtStart = lines[startLine - 1] ?? "";
+  const escapeHint = escapeMismatchHint(actualAtStart, expectedStartLine, mode);
+
   const matches = matchingLineNumbers(lines, expectedStartLine, mode);
-  if (matches.length > 0) return formatExpectedLineMatches(lines, matches, "Expected start line found at line(s)");
+  if (matches.length > 0) {
+    return formatExpectedLineMatches(
+      lines,
+      matches,
+      "Expected start line found at line(s)",
+      escapeHint ?? trimMismatchHint(mode),
+    );
+  }
 
   if (mode === "exact") {
     const trimMatches = matchingLineNumbers(lines, expectedStartLine, "trim");
@@ -83,13 +92,15 @@ function expectedLineHint(lines: string[], expectedStartLine: string, mode: Expe
         lines,
         trimMatches,
         "Expected start line matched by trim at line(s)",
-        "hint: use expectedStartLineMatch=\"trim\" if whitespace differs.",
+        trimMismatchHint("exact"),
       );
     }
   }
 
   const closeMatches = formatCloseLineMatches(lines, expectedStartLine, "Close start-line matches");
-  return closeMatches ? `${closeMatches}\nhint: use expectedStartLineMatch=\"trim\" if whitespace differs.` : "";
+  const trimTail = trimMismatchHint(mode);
+  if (closeMatches) return [closeMatches, escapeHint, trimTail].filter(Boolean).join("\n");
+  return escapeHint ?? "";
 }
 
 export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Promise<string> {
@@ -107,13 +118,13 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
     const resolvedEdit = resolved[index]!;
 
     const actual = lines[resolvedEdit.startLine - 1] ?? "";
-    if (!expectedLineMatches(actual, expectedStartLine, matchMode)) {
-      const hint = expectedLineHint(lines, expectedStartLine, matchMode);
+    if (!lineContentMatches(actual, expectedStartLine, matchMode)) {
+      const hint = expectedLineHint(lines, expectedStartLine, matchMode, resolvedEdit.startLine);
       throw new Error(
-        [
+        formatFailureMessage(
           `edit[${index}] expectedStartLine mismatch at line ${resolvedEdit.startLine}; no edits were applied.`,
-          hint || "Read the file to see current content.",
-        ].join("\n"),
+          [hint || "Read the file to see current content."],
+        ),
       );
     }
 

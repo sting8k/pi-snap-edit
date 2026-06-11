@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
 import { formatCloseLineMatches } from "./fuzzy.js";
+import { formatFailureMessage, unescapeLiteralSequences } from "./match-helpers.js";
 import type { TargetEditOp, TargetInsertBeforeOp, TargetInsertAfterOp } from "./schemas.js";
 import { detectLineEnding, splitLines } from "./text.js";
 
@@ -50,14 +51,56 @@ function lineIndexAt(offsets: number[], lines: string[], offset: number): number
   return Math.min(index, lines.length - 1);
 }
 
-function findOccurrences(text: string, target: string): Occurrence[] {
+type TargetOccurrences = {
+  raw: Occurrence[];
+  fallback: Occurrence[];
+};
+
+function findNeedleOccurrences(text: string, needle: string): Occurrence[] {
   const occurrences: Occurrence[] = [];
-  let index = text.indexOf(target);
+  let index = text.indexOf(needle);
   while (index !== -1) {
-    occurrences.push({ start: index, end: index + target.length, startLine: 0, endLine: 0 });
-    index = text.indexOf(target, index + target.length);
+    occurrences.push({ start: index, end: index + needle.length, startLine: 0, endLine: 0 });
+    index = text.indexOf(needle, index + Math.max(1, needle.length));
   }
   return occurrences;
+}
+
+function findTargetOccurrences(text: string, target: string): TargetOccurrences {
+  const raw = findNeedleOccurrences(text, target);
+  const unescaped = unescapeLiteralSequences(target);
+  const fallback = unescaped === target ? [] : findNeedleOccurrences(text, unescaped);
+  return { raw, fallback };
+}
+
+function allOccurrences(occurrences: TargetOccurrences): Occurrence[] {
+  return [...occurrences.raw, ...occurrences.fallback].sort((left, right) => left.start - right.start);
+}
+
+function selectOccurrences(
+  occurrences: TargetOccurrences,
+  selector: (occurrence: Occurrence) => boolean,
+): Occurrence[] {
+  const rawMatches = occurrences.raw.filter(selector);
+  return rawMatches.length > 0 ? rawMatches : occurrences.fallback.filter(selector);
+}
+
+function targetNotFoundMessage(index: number, target: string, lines: string[], text: string): string {
+  const unescaped = unescapeLiteralSequences(target);
+  const closeRaw = formatCloseLineMatches(lines, target, "close target matches");
+  const closeUnescaped = unescaped !== target
+    ? formatCloseLineMatches(lines, unescaped, "close target matches (after unescaping)")
+    : "";
+  const escapeHint = unescaped !== target && text.includes(unescaped) && !text.includes(target)
+    ? "hint: target uses escape sequences; the file matches the unescaped form — fix escapes or use literal newlines in target."
+    : unescaped !== target && !text.includes(unescaped)
+      ? "hint: check escape sequences in target (e.g. \\n, \\t)."
+      : undefined;
+  return formatFailureMessage(`op[${index}] target not found: ${JSON.stringify(target)}`, [
+    closeRaw,
+    closeUnescaped,
+    escapeHint,
+  ]);
 }
 
 function resolveOccurrenceLines(occurrences: Occurrence[], lines: string[], offsets: number[]): void {
@@ -86,16 +129,17 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
   if (op.target.length === 0) throw new Error(`op[${index}] target must not be empty`);
   if (op.target.includes("\r")) throw new Error(`op[${index}] target must use \\n line endings, not \\r`);
 
-  const all = findOccurrences(text, op.target);
-  if (all.length === 0) {
-    const closeMatches = formatCloseLineMatches(lines, op.target, "close target matches");
-    throw new Error([`op[${index}] target not found: ${JSON.stringify(op.target)}`, closeMatches].filter(Boolean).join("\n"));
+  const occurrences = findTargetOccurrences(text, op.target);
+  if (occurrences.raw.length === 0 && occurrences.fallback.length === 0) {
+    throw new Error(targetNotFoundMessage(index, op.target, lines, text));
   }
-  resolveOccurrenceLines(all, lines, offsets);
+  resolveOccurrenceLines(occurrences.raw, lines, offsets);
+  resolveOccurrenceLines(occurrences.fallback, lines, offsets);
+  const all = allOccurrences(occurrences);
 
   if (op.type === "insert_before" || op.type === "insert_after") {
     const targetLine = validateLineSelector(op.line, lines.length, index);
-    const matches = all.filter((o) => o.startLine <= targetLine && o.endLine >= targetLine);
+    const matches = selectOccurrences(occurrences, (o) => o.startLine <= targetLine && o.endLine >= targetLine);
     if (matches.length === 0) {
       throw new Error(
         `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0` +
@@ -119,7 +163,7 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
 
   if (hasLine) {
     const targetLine = validateLineSelector(op.line, lines.length, index);
-    const matches = all.filter((o) => o.startLine <= targetLine && o.endLine >= targetLine);
+    const matches = selectOccurrences(occurrences, (o) => o.startLine <= targetLine && o.endLine >= targetLine);
     if (matches.length === 0) {
       throw new Error(
         `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0` +
@@ -150,7 +194,7 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
   }
   const rangeStart = range.startLine - 1;
   const rangeEnd = range.endLine - 1;
-  const matches = all.filter((o) => o.startLine >= rangeStart && o.endLine <= rangeEnd);
+  const matches = selectOccurrences(occurrences, (o) => o.startLine >= rangeStart && o.endLine <= rangeEnd);
   if (matches.length === 0) {
     throw new Error(
       `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0` +
