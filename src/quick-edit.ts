@@ -3,7 +3,7 @@ import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, format
 import { getFileStatSnapshot } from "./file-stat.js";
 import { formatCloseLineMatches } from "./fuzzy.js";
 import type { Edit } from "./schemas.js";
-import { detectLineEnding, splitLines } from "./text.js";
+import { detectLineEnding, joinBom, splitBom, splitLines } from "./text.js";
 
 type ResolvedEdit = {
   startLine: number;
@@ -97,7 +97,8 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
 
 
   const content = await fs.readFile(absolutePath, "utf8");
-  const lines = splitLines(content);
+  const source = splitBom(content);
+  const lines = splitLines(source.text);
   const resolved = edits.map((edit, index) => validateLineRange(lines.length, edit, `edit[${index}]`));
 
   for (let index = 0; index < edits.length; index++) {
@@ -138,11 +139,11 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
     updated.splice(edit.startLine - 1, edit.insert ? 0 : edit.endLine - edit.startLine + 1, ...edit.lines);
   }
 
-  const lineEnding = detectLineEnding(content);
-  const hasTrailingNewline = content.endsWith("\n");
+  const lineEnding = detectLineEnding(source.text);
+  const hasTrailingNewline = source.text.endsWith("\n");
   let newContent = updated.join(lineEnding);
   if (hasTrailingNewline && updated.length > 0) newContent += lineEnding;
-  await fs.writeFile(absolutePath, newContent, "utf8");
+  await fs.writeFile(absolutePath, joinBom(newContent, source.bom), "utf8");
 
   const ordered = resolved.map((_, i) => i).sort((a, b) => resolved[a]!.startLine - resolved[b]!.startLine);
   let offset = 0;

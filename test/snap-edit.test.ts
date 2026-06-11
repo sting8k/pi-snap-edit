@@ -24,6 +24,12 @@ async function tempFile(name: string, content: string): Promise<string> {
   return file;
 }
 
+async function assertUtf8BomContent(file: string, expectedTextAfterBom: string): Promise<void> {
+  const bytes = await readFile(file);
+  assert.equal(bytes.subarray(0, 3).toString("hex"), "efbbbf");
+  assert.equal(bytes.subarray(3).toString("utf8"), expectedTextAfterBom);
+}
+
 function editFor(lines: string[], startLine: number, endLine: number, replacementLines: string[]): Edit {
   return {
     expectedStartLine: lines[startLine - 1] ?? "",
@@ -53,6 +59,18 @@ describe("text helpers", () => {
       numberReadText("one\r\ntwo\r\n\n[Showing lines 1-2 of 3. Use offset=3 to continue.]", { totalLineCount: 3 }),
       "1| one\n2| two\n\n[Showing lines 1-2 of 3. Use offset=3 to continue.]",
     );
+  });
+
+  it("numbers UTF-8 BOM read output without exposing a hidden first-line character", () => {
+    assert.equal(numberReadText("\uFEFFone\ntwo\n"), "1| one\n2| two");
+  });
+
+  it("preserves content FEFF after the UTF-8 BOM in read output", () => {
+    assert.equal(numberReadText("\uFEFF\uFEFFone\n"), "1| \uFEFFone");
+  });
+
+  it("preserves FEFF content when numbering a later read chunk", () => {
+    assert.equal(numberReadText("\uFEFFmiddle\n", { startLine: 2 }), "2| \uFEFFmiddle");
   });
 });
 
@@ -186,6 +204,30 @@ describe("quick edits", () => {
     await applyQuickEdits(file, [editFor(original, 2, 2, ["SECOND", "inserted"])]);
 
     assert.equal(await readFile(file, "utf8"), "first\r\nSECOND\r\ninserted\r\nthird");
+  });
+
+  it("preserves a single UTF-8 BOM when editing the first line", async () => {
+    const file = await tempFile("sample.txt", "\uFEFFone\ntwo\n");
+
+    await applyQuickEdits(file, [{ start: 1, expectedStartLine: "one", lines: ["ONE"] }]);
+
+    await assertUtf8BomContent(file, "ONE\ntwo\n");
+  });
+
+  it("preserves content FEFF immediately after the UTF-8 BOM", async () => {
+    const file = await tempFile("sample.txt", "\uFEFF\uFEFFone\ntwo\n");
+
+    await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["TWO"] }]);
+
+    await assertUtf8BomContent(file, "\uFEFFone\nTWO\n");
+  });
+
+  it("allows adding a leading FEFF to a file that did not already have one", async () => {
+    const file = await tempFile("sample.txt", "one\n");
+
+    await applyQuickEdits(file, [{ start: 1, expectedStartLine: "one", lines: ["\uFEFFONE"] }]);
+
+    await assertUtf8BomContent(file, "ONE\n");
   });
 
   it("accepts expectedStartLine copied from numbered CRLF read output", async () => {
@@ -351,6 +393,14 @@ describe("substitute edits", () => {
 
     assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree");
   });
+
+  it("preserves a single UTF-8 BOM during substitutions", async () => {
+    const file = await tempFile("sample.txt", "\uFEFFone\ntwo\n");
+
+    await applySubstituteEdits(file, 1, 1, [{ old: "one", new: "ONE", count: 1 }]);
+
+    await assertUtf8BomContent(file, "ONE\ntwo\n");
+  });
 });
 
 describe("target edits", () => {
@@ -365,6 +415,16 @@ describe("target edits", () => {
     assert.match(result, /- app\.mount\('#app'\);/);
     assert.match(result, /\+ app\.mount\('#root'\);/);
     assert.match(result, /1\| const app = createApp\(\);\n2\| app\.mount\('#root'\);/);
+  });
+
+  it("preserves a single UTF-8 BOM when target replacement starts at the first line", async () => {
+    const file = await tempFile("sample.txt", "\uFEFFone\ntwo\n");
+
+    await applyTargetEdits(file, [
+      { type: "replace", target: "one", line: 1, replacement: "ONE" },
+    ]);
+
+    await assertUtf8BomContent(file, "ONE\ntwo\n");
   });
 
   it("inserts full lines after the line containing the target", async () => {
