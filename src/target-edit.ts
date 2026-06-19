@@ -83,7 +83,7 @@ function splitLinesWithOffsets(text: string): LineWithOffset[] {
       start = i + 1;
     }
   }
-  if (start <= text.length) {
+  if (start < text.length) {
     lines.push({ text: text.slice(start), start, end: text.length });
   }
   return lines;
@@ -97,7 +97,7 @@ function trimTrailingLength(s: string): number {
   return s.length - s.trimEnd().length;
 }
 
-function findTrimmedOccurrences(text: string, target: string): Occurrence[] {
+function trimmedTargetLines(target: string): string[] {
   const targetLines = target.split("\n");
   // Ignore trailing empty/whitespace-only lines that often come from copying a
   // block including its terminating newline. Trim matching is meant to be
@@ -105,8 +105,17 @@ function findTrimmedOccurrences(text: string, target: string): Occurrence[] {
   while (targetLines.length > 1 && targetLines[targetLines.length - 1]!.trim() === "") {
     targetLines.pop();
   }
+  return targetLines;
+}
+
+function hasMeaningfulTrimTarget(target: string): boolean {
+  return trimmedTargetLines(target).some((line) => line.trim().length > 0);
+}
+
+function findTrimmedOccurrences(text: string, target: string): Occurrence[] {
+  const targetLines = trimmedTargetLines(target);
   const targetLineCount = targetLines.length;
-  if (targetLineCount === 0) return [];
+  if (targetLineCount === 0 || !targetLines.some((line) => line.trim().length > 0)) return [];
 
   const textLines = splitLinesWithOffsets(text);
   const occurrences: Occurrence[] = [];
@@ -223,6 +232,9 @@ function validateLineSelector(line: unknown, lineCount: number, index: number): 
 function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], offsets: number[], index: number): Occurrence[] {
   if (op.target.length === 0) throw new Error(`op[${index}] target must not be empty`);
   if (op.target.includes("\r")) throw new Error(`op[${index}] target must use \\n line endings, not \\r`);
+  if (op.matchMode === "trim" && !hasMeaningfulTrimTarget(op.target)) {
+    throw new Error(`op[${index}] target must contain non-whitespace content when matchMode is trim`);
+  }
 
   const occurrences = findTargetOccurrences(text, op.target, op.matchMode ?? "exact");
   if (occurrences.raw.length === 0 && occurrences.fallback.length === 0 && occurrences.trimmed.length === 0) {
@@ -350,8 +362,8 @@ function trimReplacementEdges(replacement: string): string {
   if (lines.length === 0) return replacement;
   const firstLine = lines[0];
   if (firstLine !== undefined) lines[0] = firstLine.trimStart();
-  // Drop trailing empty lines (from a trailing newline in the replacement).
-  while (lines.length > 1 && lines[lines.length - 1] === "") {
+  // Drop trailing whitespace-only lines (from copied blank lines at the edge).
+  while (lines.length > 1 && lines[lines.length - 1]?.trim() === "") {
     lines.pop();
   }
   const lastLine = lines[lines.length - 1];

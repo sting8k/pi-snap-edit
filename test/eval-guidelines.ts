@@ -632,18 +632,9 @@ async function runEval(): Promise<Result[]> {
     const naiveFn = "edits" in naiveInput ? "quick" : "target";
     const naiveResult = await runEdit(naiveFn, naiveFile, naiveInput);
 
-    let naiveCorrect: boolean;
-    if (task.naiveExpectedFail) {
-      // naive should fail OR produce wrong content
-      naiveCorrect = false;
-    } else if (task.expectThrow) {
-      // expectThrow applies to naive too: correct = throws + file unchanged
-      naiveCorrect = !naiveResult.ok && naiveResult.content === task.expectedContent;
-    } else if (task.naiveExpectedContent !== undefined) {
-      naiveCorrect = naiveResult.ok && naiveResult.content === task.naiveExpectedContent;
-    } else {
-      naiveCorrect = naiveResult.ok && naiveResult.content === task.expectedContent;
-    }
+    const naiveCorrect = task.expectThrow
+      ? !naiveResult.ok && naiveResult.content === task.expectedContent
+      : naiveResult.ok && naiveResult.content === task.expectedContent;
 
     results.push({
       task,

@@ -880,6 +880,30 @@ describe("target edits", () => {
     assert.equal(await readFile(file, "utf8"), "function foo() {\n    \n}\n");
   });
 
+
+  it("rejects whitespace-only target with matchMode=trim without editing", async () => {
+    const original = "alpha\n";
+    const file = await tempFile("sample.txt", original);
+
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: " \n", matchMode: "trim", replacement: "beta" },
+      ]),
+      /target must contain non-whitespace content when matchMode is trim/,
+    );
+    assert.equal(await readFile(file, "utf8"), original);
+  });
+
+  it("trim replacement drops trailing whitespace-only edge lines", async () => {
+    const original = "alpha\nbeta\n";
+    const file = await tempFile("sample.txt", original);
+
+    await applyTargetEdits(file, [
+      { type: "replace", target: "alpha", matchMode: "trim", replacement: "  ALPHA\n   \n" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "ALPHA\nbeta\n");
+  });
   it("insert_after with matchMode=trim", async () => {
     const original = "function foo() {\n    bar();\n}\n";
     const file = await tempFile("sample.ts", original);

@@ -101,15 +101,18 @@ function findAnchorBlocks(lines: string[], firstLine: string, lastLine: string):
   if (firstTrimmed.length < 4) return [];
   if (firstTrimmed === lastTrimmed) return [];
 
+  const nextLastAtOrAfter: number[] = new Array(lines.length + 1).fill(-1);
+  let nextLast = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i]!.trim() === lastTrimmed) nextLast = i;
+    nextLastAtOrAfter[i] = nextLast;
+  }
+
   const blocks: AnchorBlock[] = [];
   for (let i = 0; i < lines.length; i++) {
     if (lines[i]!.trim() !== firstTrimmed) continue;
-    for (let j = i + 2; j < lines.length; j++) {
-      if (lines[j]!.trim() === lastTrimmed) {
-        blocks.push({ startLine: i + 1, endLine: j + 1 });
-        break;
-      }
-    }
+    const endIndex = nextLastAtOrAfter[i + 2] ?? -1;
+    if (endIndex !== -1) blocks.push({ startLine: i + 1, endLine: endIndex + 1 });
     if (blocks.length >= 3) break;
   }
   return blocks;
