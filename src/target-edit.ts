@@ -88,6 +88,14 @@ function splitLinesWithOffsets(text: string): LineWithOffset[] {
   return lines;
 }
 
+function trimLeadingLength(s: string): number {
+  return s.length - s.trimStart().length;
+}
+
+function trimTrailingLength(s: string): number {
+  return s.length - s.trimEnd().length;
+}
+
 function findTrimmedOccurrences(text: string, target: string): Occurrence[] {
   const targetLines = target.split("\n");
   // Ignore trailing empty/whitespace-only lines that often come from copying a
@@ -111,9 +119,18 @@ function findTrimmedOccurrences(text: string, target: string): Occurrence[] {
       }
     }
     if (matches) {
-      const start = textLines[i]!.start;
+      // Bound the occurrence to the trimmed content so that original indentation
+      // and line endings are preserved on replace/delete.
+      const firstLine = textLines[i]!;
       const lastLine = textLines[i + targetLineCount - 1]!;
-      occurrences.push({ start, end: lastLine.end, startLine: 0, endLine: 0 });
+      const start = firstLine.start + trimLeadingLength(firstLine.text);
+      let end = Math.max(start, lastLine.end - trimTrailingLength(lastLine.text));
+      // For a single-line target, don't consume the terminating newline so
+      // a non-newline replacement doesn't join the following line.
+      if (targetLineCount === 1 && !target.endsWith("\n") && end > start && text[end] === "\n") {
+        end = end + 1;
+      }
+      occurrences.push({ start, end, startLine: 0, endLine: 0 });
     }
   }
   return occurrences;
@@ -127,8 +144,15 @@ function findTargetOccurrences(text: string, target: string, matchMode: "exact" 
   return { raw, fallback, trimmed };
 }
 
+function overlaps(left: Occurrence, right: Occurrence): boolean {
+  return left.start < right.end && right.start < left.end;
+}
+
 function allOccurrences(occurrences: TargetOccurrences): Occurrence[] {
-  return [...occurrences.raw, ...occurrences.fallback, ...occurrences.trimmed].sort((left, right) => left.start - right.start);
+  const exact = [...occurrences.raw, ...occurrences.fallback];
+  // Only include trimmed occurrences that don't overlap with exact matches.
+  const trimmed = occurrences.trimmed.filter((trim) => !exact.some((ex) => overlaps(ex, trim)));
+  return [...exact, ...trimmed].sort((left, right) => left.start - right.start);
 }
 
 function selectOccurrences(
