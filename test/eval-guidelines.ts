@@ -636,6 +636,9 @@ async function runEval(): Promise<Result[]> {
     if (task.naiveExpectedFail) {
       // naive should fail OR produce wrong content
       naiveCorrect = false;
+    } else if (task.expectThrow) {
+      // expectThrow applies to naive too: correct = throws + file unchanged
+      naiveCorrect = !naiveResult.ok && naiveResult.content === task.expectedContent;
     } else if (task.naiveExpectedContent !== undefined) {
       naiveCorrect = naiveResult.ok && naiveResult.content === task.naiveExpectedContent;
     } else {

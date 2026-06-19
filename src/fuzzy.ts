@@ -140,13 +140,27 @@ export function formatMultiLineTargetHints(lines: string[], target: string): str
 
   const blocks = findAnchorBlocks(lines, firstLine, lastLine);
   if (blocks.length > 0) {
+    const maxBlockLines = 10;
     sections.push("anchor block candidates (first/last line match by trim, middle differs):");
     for (const b of blocks) {
       const blockLines = lines.slice(b.startLine - 1, b.endLine);
       const width = String(b.endLine).length;
       sections.push(`  lines ${b.startLine}-${b.endLine}:`);
-      for (const [i, line] of blockLines.entries()) {
-        sections.push(`    ${String(b.startLine + i).padStart(width, " ")}| ${line.slice(0, 80)}`);
+      if (blockLines.length <= maxBlockLines) {
+        for (const [i, line] of blockLines.entries()) {
+          sections.push(`    ${String(b.startLine + i).padStart(width, " ")}| ${line.slice(0, 80)}`);
+        }
+      } else {
+        // Show first 3 + ellipsis + last 3 to cap output
+        const head = 3;
+        const tail = 3;
+        for (const [i, line] of blockLines.slice(0, head).entries()) {
+          sections.push(`    ${String(b.startLine + i).padStart(width, " ")}| ${line.slice(0, 80)}`);
+        }
+        sections.push(`    ${" ".repeat(width)}  ... (${blockLines.length - head - tail} lines omitted) ...`);
+        for (const [i, line] of blockLines.slice(blockLines.length - tail).entries()) {
+          sections.push(`    ${String(b.endLine - tail + i).padStart(width, " ")}| ${line.slice(0, 80)}`);
+        }
       }
     }
   }
