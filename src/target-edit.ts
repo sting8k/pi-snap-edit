@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
-import { formatCloseLineMatches } from "./fuzzy.js";
+import { formatCloseLineMatches, formatMultiLineTargetHints } from "./fuzzy.js";
 import { formatFailureMessage, unescapeLiteralSequences } from "./match-helpers.js";
 import type { TargetEditOp, TargetInsertBeforeOp, TargetInsertAfterOp } from "./schemas.js";
 import { detectLineEnding, joinBom, splitBom, splitLines } from "./text.js";
@@ -91,6 +91,10 @@ function targetNotFoundMessage(index: number, target: string, lines: string[], t
   const closeUnescaped = unescaped !== target
     ? formatCloseLineMatches(lines, unescaped, "close target matches (after unescaping)")
     : "";
+  const multiLineRaw = formatMultiLineTargetHints(lines, target);
+  const multiLineUnescaped = unescaped !== target && unescaped.includes("\n")
+    ? formatMultiLineTargetHints(lines, unescaped)
+    : "";
   const escapeHint = unescaped !== target && text.includes(unescaped) && !text.includes(target)
     ? "hint: target uses escape sequences; the file matches the unescaped form — fix escapes or use literal newlines in target."
     : unescaped !== target && !text.includes(unescaped)
@@ -99,6 +103,8 @@ function targetNotFoundMessage(index: number, target: string, lines: string[], t
   return formatFailureMessage(`op[${index}] target not found: ${JSON.stringify(target)}`, [
     closeRaw,
     closeUnescaped,
+    multiLineRaw,
+    multiLineUnescaped,
     escapeHint,
   ]);
 }

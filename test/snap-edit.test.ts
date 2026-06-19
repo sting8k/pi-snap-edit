@@ -659,4 +659,61 @@ describe("target edits", () => {
     assert.match(result, /20\| LINE10/);
   });
 
+  it("shows first/last line near matches for multi-line target not found", async () => {
+    const original = "alpha\nif (debug) {\n  console.log(val);\n}\ngamma\n";
+    const file = await tempFile("sample.ts", original);
+
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "if (debug) {\n  console.log(value);\n}\n", line: 2, replacement: "if (debug) {\n  console.log(v);\n}\n" },
+      ]),
+      /target not found[\s\S]*first line near matches:[\s\S]*line 2: if \(debug\) \{/
+    );
+    assert.equal(await readFile(file, "utf8"), original);
+  });
+
+  it("shows anchor block candidates for multi-line target not found", async () => {
+    const original = "alpha\nif (debug) {\n  console.log(val);\n}\ngamma\n";
+    const file = await tempFile("sample.ts", original);
+
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "if (debug) {\n  console.log(wrong);\n}\n", line: 2, replacement: "REPLACED" },
+      ]),
+      /target not found[\s\S]*anchor block candidates[\s\S]*lines 2-4:/
+    );
+    assert.equal(await readFile(file, "utf8"), original);
+  });
+
+  it("shows multi-line hints for unescaped target when JSON sends escaped newlines", async () => {
+    const original = "before\nif (debug) {\n  log();\n}\nafter\n";
+    const file = await tempFile("sample.ts", original);
+
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "delete", target: "if (debug) {\\n  wrong();\\n}\\n", line: 2 },
+      ]),
+      /target not found[\s\S]*first line near matches:[\s\S]*line 2: if \(debug\) \{/
+    );
+    assert.equal(await readFile(file, "utf8"), original);
+  });
+
+  it("gives clean error without extra sections when no near matches exist", async () => {
+    const original = "alpha\nbeta\ngamma\n";
+    const file = await tempFile("sample.txt", original);
+
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "delta\nepsilon\nzeta\n", line: 1, replacement: "DELTA" },
+      ]),
+      (err: Error) => {
+        assert.match(err.message, /target not found/);
+        assert.doesNotMatch(err.message, /first line near matches/);
+        assert.doesNotMatch(err.message, /anchor block candidates/);
+        return true;
+      },
+    );
+    assert.equal(await readFile(file, "utf8"), original);
+  });
+
 });
