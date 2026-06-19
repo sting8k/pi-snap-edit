@@ -42,7 +42,7 @@ const TargetBase = {
   target: Type.String({ minLength: 1, description: "Exact literal target text to find. Use \\n for multi-line targets." }),
   matchMode: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], {
     default: "exact",
-    description: "Match mode. exact requires exact whitespace; trim compares lines after trimming leading/trailing whitespace (original indentation is still preserved on write).",
+    description: "Match mode. exact (default) requires exact whitespace and matches substrings. trim compares whole lines after trimming leading/trailing whitespace; the occurrence is bounded to the trimmed content so original indentation is preserved, and replacement leading/trailing whitespace is stripped before writing.",
   })),
 };
 

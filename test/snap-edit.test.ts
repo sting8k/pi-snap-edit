@@ -836,7 +836,6 @@ describe("target edits", () => {
     assert.match(result, /2\|\s+port: 8080/);
   });
 
-
   it("trim replace does not consume the following line", async () => {
     const original = "function foo() {\n  bar();\n}\n";
     const file = await tempFile("sample.ts", original);
@@ -847,6 +846,7 @@ describe("target edits", () => {
 
     assert.equal(await readFile(file, "utf8"), "function foo() {\n  baz();\n}\n");
   });
+
   it("preserves original indentation when replacing with matchMode=trim", async () => {
     const original = "function foo() {\n    bar();\n}\n";
     const file = await tempFile("sample.ts", original);
@@ -869,42 +869,7 @@ describe("target edits", () => {
     assert.equal(await readFile(file, "utf8"), "alpha\nif (debug) {\n  console.log(result);\n}\ngamma\n");
   });
 
-  it("trim exact match wins over trim fallback", async () => {
-    const original = "    a\n  a\n";
-    const file = await tempFile("sample.txt", original);
-
-    await applyTargetEdits(file, [
-      { type: "replace", target: "a", line: 1, matchMode: "trim", replacement: "X" },
-    ]);
-
-    assert.equal(await readFile(file, "utf8"), "    X\n  a\n");
-  });
-
-  it("uses trim fallback when exact match fails", async () => {
-    const original = "    a\n  a\n";
-    const file = await tempFile("sample.txt", original);
-
-    await applyTargetEdits(file, [
-      { type: "replace", target: "  a", line: 2, matchMode: "trim", replacement: "X" },
-    ]);
-
-    assert.equal(await readFile(file, "utf8"), "    a\nX\n");
-  });
-
-  it("fails trim match when multiple trimmed occurrences intersect the line", async () => {
-    const original = "a a\nb\n";
-    const file = await tempFile("sample.txt", original);
-
-    await assert.rejects(
-      async () => applyTargetEdits(file, [
-        { type: "replace", target: "a", line: 1, matchMode: "trim", replacement: "X" },
-      ]),
-      /expected 1 occurrence of "a" on line 1 but found 2/,
-    );
-    assert.equal(await readFile(file, "utf8"), original);
-  });
-
-  it("deletes with matchMode=trim", async () => {
+  it("deletes with matchMode=trim preserving indentation", async () => {
     const original = "function foo() {\n    bar();\n}\n";
     const file = await tempFile("sample.ts", original);
 
@@ -912,7 +877,7 @@ describe("target edits", () => {
       { type: "delete", target: "  bar();", line: 2, matchMode: "trim" },
     ]);
 
-    assert.equal(await readFile(file, "utf8"), "function foo() {\n  \n}\n");
+    assert.equal(await readFile(file, "utf8"), "function foo() {\n    \n}\n");
   });
 
   it("insert_after with matchMode=trim", async () => {

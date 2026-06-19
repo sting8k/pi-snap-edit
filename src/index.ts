@@ -83,7 +83,7 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: "Edit by exact target text with line or range selectors",
     promptGuidelines: [
       "Use target_edit when you know an exact marker/text but line numbers are inconvenient.",
-      "Use exact literal target text only; no regex. Use \\n for multi-line targets and replacements; set matchMode=trim when indentation/trailing whitespace may differ (original indentation is preserved on write).",
+      "Use exact literal target text only; no regex. Use \\n for multi-line targets and replacements. Set matchMode=trim when indentation or trailing whitespace may differ: trim matches whole lines after trimming, preserves original indentation, and strips replacement leading/trailing whitespace.",
       "Use line for a single occurrence, range for every occurrence inside an inclusive line range, both to scope a range and verify one occurrence intersects the line, or neither if the target is unique in the file.",
       "For inserts, use insert_before or insert_after with the line where target appears.",
       "Batch operations are ordered in memory and written atomically only after all operations validate.",

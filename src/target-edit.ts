@@ -15,6 +15,7 @@ type Occurrence = {
   end: number;
   startLine: number;
   endLine: number;
+  kind: "raw" | "fallback" | "trimmed";
 };
 
 function toNormalized(state: LineState): string {
@@ -61,7 +62,7 @@ function findNeedleOccurrences(text: string, needle: string): Occurrence[] {
   const occurrences: Occurrence[] = [];
   let index = text.indexOf(needle);
   while (index !== -1) {
-    occurrences.push({ start: index, end: index + needle.length, startLine: 0, endLine: 0 });
+    occurrences.push({ start: index, end: index + needle.length, startLine: 0, endLine: 0, kind: "raw" });
     index = text.indexOf(needle, index + Math.max(1, needle.length));
   }
   return occurrences;
@@ -124,20 +125,31 @@ function findTrimmedOccurrences(text: string, target: string): Occurrence[] {
       const firstLine = textLines[i]!;
       const lastLine = textLines[i + targetLineCount - 1]!;
       const start = firstLine.start + trimLeadingLength(firstLine.text);
-      let end = Math.max(start, lastLine.end - trimTrailingLength(lastLine.text));
-
-      occurrences.push({ start, end, startLine: 0, endLine: 0 });
+      // Exclude the terminating newline (if any) so the occurrence does not
+      // consume the line ending of the last matched line.
+      const hasNewline = lastLine.end > 0 && text[lastLine.end - 1] === "\n";
+      const contentEnd = lastLine.end - (hasNewline ? 1 : 0);
+      const end = Math.max(start, contentEnd - trimTrailingLength(lastLine.text));
+      occurrences.push({ start, end, startLine: 0, endLine: 0, kind: "trimmed" });
     }
   }
   return occurrences;
 }
 
 function findTargetOccurrences(text: string, target: string, matchMode: "exact" | "trim" = "exact"): TargetOccurrences {
+  if (matchMode === "trim") {
+    // In trim mode we do line-level whitespace-tolerant matching. Ignore exact
+    // substring matches so that a target like "bar();" doesn't accidentally match
+    // inside an indented line and change the effective column.
+    const trimmed = findTrimmedOccurrences(text, target);
+    const unescaped = unescapeLiteralSequences(target);
+    const fallback = unescaped === target ? [] : findTrimmedOccurrences(text, unescaped).map((o) => ({ ...o, kind: "fallback" as const }));
+    return { raw: [], fallback, trimmed };
+  }
   const raw = findNeedleOccurrences(text, target);
   const unescaped = unescapeLiteralSequences(target);
-  const fallback = unescaped === target ? [] : findNeedleOccurrences(text, unescaped);
-  const trimmed = matchMode === "trim" ? findTrimmedOccurrences(text, target) : [];
-  return { raw, fallback, trimmed };
+  const fallback = unescaped === target ? [] : findNeedleOccurrences(text, unescaped).map((o) => ({ ...o, kind: "fallback" as const }));
+  return { raw, fallback, trimmed: [] };
 }
 
 function overlaps(left: Occurrence, right: Occurrence): boolean {
@@ -329,10 +341,32 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
   return [all[0]!];
 }
 
-function replaceRanges(text: string, occurrences: Occurrence[], replacement: string): string {
+function trimReplacementEdges(replacement: string): string {
+  // Remove leading whitespace from the first line and trailing whitespace/empty
+  // lines from the end while preserving internal newlines. This lets trim mode
+  // tolerate copied indentation in the replacement without double-indenting or
+  // consuming surrounding line endings.
+  const lines = replacement.split("\n");
+  if (lines.length === 0) return replacement;
+  const firstLine = lines[0];
+  if (firstLine !== undefined) lines[0] = firstLine.trimStart();
+  // Drop trailing empty lines (from a trailing newline in the replacement).
+  while (lines.length > 1 && lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  const lastLine = lines[lines.length - 1];
+  if (lastLine !== undefined) lines[lines.length - 1] = lastLine.trimEnd();
+  return lines.join("\n");
+}
+
+function replaceRanges(text: string, occurrences: Occurrence[], replacement: string, matchMode?: "exact" | "trim"): string {
+  // In trim mode, the file's surrounding whitespace is preserved by the
+  // occurrence boundary, so the replacement should be treated as trimmed
+  // content. Exact mode keeps the replacement literal.
+  const effectiveReplacement = matchMode === "trim" ? trimReplacementEdges(replacement) : replacement;
   let updated = text;
   for (const occurrence of [...occurrences].reverse()) {
-    updated = `${updated.slice(0, occurrence.start)}${replacement}${updated.slice(occurrence.end)}`;
+    updated = `${updated.slice(0, occurrence.start)}${effectiveReplacement}${updated.slice(occurrence.end)}`;
   }
   return updated;
 }
@@ -432,7 +466,7 @@ export async function applyTargetEdits(
         state = applyInsert(state, occurrences, op);
         break;
       case "replace":
-        state = fromNormalized(replaceRanges(text, occurrences, op.replacement));
+        state = fromNormalized(replaceRanges(text, occurrences, op.replacement, op.matchMode));
         break;
       case "delete":
         state = fromNormalized(replaceRanges(text, occurrences, ""));
