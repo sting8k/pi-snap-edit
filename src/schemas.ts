@@ -10,7 +10,7 @@ export const QuickEditParams = Type.Object({
     Type.Object({
       start: Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF." }),
       end: Type.Optional(Type.Integer({ minimum: 1, description: "Optional 1-indexed inclusive end line number." })),
-      expectedStartLine: Type.String({ description: "Guard for the current start line. Exact by default; set expectedStartLineMatch=trim to ignore leading/trailing whitespace." }),
+      expectedStartLine: Type.String({ description: "Guard for the current start line. Exact by default; set expectedStartLineMatch=trim to ignore leading/trailing whitespace. JSON-style escape sequences (e.g. \\n, \\t) are unescaped before comparing." }),
       expectedStartLineMatch: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], { description: "How to compare expectedStartLine to the current start line. Defaults to exact; trim ignores leading/trailing whitespace." })),
       preserveIndent: Type.Optional(Type.Boolean({ description: "When true, prefixes the current start line indentation to each non-empty replacement line. Use unindented replacement lines." })),
       lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it." }),
@@ -49,21 +49,21 @@ export const TargetEditParams = Type.Object({
       Type.Object({
         type: Type.Literal("replace", { description: "Replace exact target text." }),
         ...TargetBase,
-        line: Type.Optional(Type.Integer({ minimum: 1, description: "1-indexed line where target must appear. Must find exactly 1 occurrence intersecting this line." })),
+        line: Type.Optional(Type.Integer({ minimum: 1, description: "1-indexed line hint. When used alone, the target must appear exactly once on this line. When combined with range, at least one occurrence in the range must intersect this line. When omitted, the target must be unique in the file (unless range is provided)." })),
         range: Type.Optional(Type.Object({
           startLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line." }),
           endLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive end line." }),
-        }, { description: "Inclusive line range; replaces every occurrence fully inside the range." })),
+        }, { description: "Inclusive line range; replaces every occurrence fully inside the range. May be combined with line as a validation hint." })),
         replacement: Type.String({ description: "Replacement text. Use \\n for multi-line replacements." }),
       }),
       Type.Object({
         type: Type.Literal("delete", { description: "Delete exact target text." }),
         ...TargetBase,
-        line: Type.Optional(Type.Integer({ minimum: 1, description: "1-indexed line where target must appear. Must find exactly 1 occurrence intersecting this line." })),
+        line: Type.Optional(Type.Integer({ minimum: 1, description: "1-indexed line hint. When used alone, the target must appear exactly once on this line. When combined with range, at least one occurrence in the range must intersect this line. When omitted, the target must be unique in the file (unless range is provided)." })),
         range: Type.Optional(Type.Object({
           startLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line." }),
           endLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive end line." }),
-        }, { description: "Inclusive line range; deletes every occurrence fully inside the range." })),
+        }, { description: "Inclusive line range; deletes every occurrence fully inside the range. May be combined with line as a validation hint." })),
       }),
       Type.Object({
         type: Type.Literal("insert_before", { description: "Insert full lines before the target occurrence." }),

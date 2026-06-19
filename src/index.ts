@@ -43,11 +43,8 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: [
       "Use start/end as 1-indexed line numbers from read, rg -n, grep -n, or srcwalk output.",
       "Always provide expectedStartLine with the current content of the start line to guard against stale edits.",
-      "Guards accept unescaped literals in expectedStartLine (e.g. \\n and \\t in JSON are compared after unescaping).",
       "Default guard matching is exact. When indentation/trailing whitespace is uncertain, set expectedStartLineMatch=\"trim\" and provide the trimmed start line.",
-      "Use preserveIndent=true with expectedStartLineMatch=\"trim\" when replacement lines should inherit the current start line indentation; provide unindented replacement lines.",
       `Omit end for a single-line replacement. Use lines: [] to delete a line or range. Use lines: [""] for one blank line.`,
-      "Use start=lineCount+1 with no end to insert at EOF; for an empty file, start=1 inserts the first line.",
       "expectedStartLine only checks the start line; it does not verify the full range or detect line shifts from insertions/deletions above.",
       "Batch edits are snapshot-based, not sequential; do not renumber later edits after earlier insert/delete ops.",
       "Batch multiple independent ranges in one call; overlapping ranges are rejected atomically.",
@@ -87,9 +84,8 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: [
       "Use target_edit when you know an exact marker/text but line numbers are inconvenient.",
       "Use exact literal target text only; no regex. Use \\n for multi-line targets and replacements; targets are also matched after unescaping JSON-style sequences.",
-      "Use line to select the single occurrence intersecting that line. Use range to replace/delete every occurrence fully inside an inclusive line range.",
+      "Use line for a single occurrence, range for every occurrence inside an inclusive line range, both to scope a range and verify one occurrence intersects the line, or neither if the target is unique in the file.",
       "For inserts, use insert_before or insert_after with the line where target appears.",
-      "Use replace for inline or multi-line text replacement, delete for exact target removal, insert_before for adding lines before, and insert_after for adding lines after.",
       "Batch operations are ordered in memory and written atomically only after all operations validate.",
     ],
     parameters: TargetEditParams,

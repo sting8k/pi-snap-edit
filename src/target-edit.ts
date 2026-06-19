@@ -163,11 +163,28 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
 
   const hasLine = op.line !== undefined;
   const hasRange = op.range !== undefined;
-  if (hasLine === hasRange) {
-    throw new Error(`op[${index}] must provide exactly one of line or range`);
+
+  // Helper to validate range bounds and return selected occurrences.
+  function selectRange(range: { startLine: number; endLine: number }): Occurrence[] {
+    if (!Number.isInteger(range.startLine) || range.startLine < 1) {
+      throw new Error(`op[${index}] range.startLine must be a 1-indexed line number`);
+    }
+    if (!Number.isInteger(range.endLine) || range.endLine < 1) {
+      throw new Error(`op[${index}] range.endLine must be a 1-indexed line number`);
+    }
+    if (range.endLine < range.startLine) {
+      throw new Error(`op[${index}] invalid range: lines ${range.startLine}-${range.endLine} (endLine < startLine)`);
+    }
+    if (range.startLine > lines.length || range.endLine > lines.length) {
+      throw new Error(`op[${index}] range ${range.startLine}-${range.endLine} is out of bounds for file with ${lines.length} line(s)`);
+    }
+    const rangeStart = range.startLine - 1;
+    const rangeEnd = range.endLine - 1;
+    return selectOccurrences(occurrences, (o) => o.startLine >= rangeStart && o.endLine <= rangeEnd);
   }
 
-  if (hasLine) {
+  // line only: exactly one occurrence intersecting the line.
+  if (hasLine && !hasRange) {
     const targetLine = validateLineSelector(op.line, lines.length, index);
     const matches = selectOccurrences(occurrences, (o) => o.startLine <= targetLine && o.endLine >= targetLine);
     if (matches.length === 0) {
@@ -185,29 +202,53 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
     return [matches[0]!];
   }
 
-  const range = op.range!;
-  if (!Number.isInteger(range.startLine) || range.startLine < 1) {
-    throw new Error(`op[${index}] range.startLine must be a 1-indexed line number`);
+  // range only: every occurrence fully inside the inclusive range.
+  if (!hasLine && hasRange) {
+    const range = op.range!;
+    const matches = selectRange(range);
+    if (matches.length === 0) {
+      throw new Error(
+        `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0` +
+          formatOccurrenceLines(all, lines),
+      );
+    }
+    return matches;
   }
-  if (!Number.isInteger(range.endLine) || range.endLine < 1) {
-    throw new Error(`op[${index}] range.endLine must be a 1-indexed line number`);
+
+  // both line and range: range selects all occurrences inside the range, then
+  // verify at least one of them intersects the provided line (a validation hint).
+  if (hasLine && hasRange) {
+    const range = op.range!;
+    const targetLine = validateLineSelector(op.line, lines.length, index);
+    const rangeMatches = selectRange(range);
+    if (rangeMatches.length === 0) {
+      throw new Error(
+        `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0` +
+          formatOccurrenceLines(all, lines),
+      );
+    }
+    const intersecting = rangeMatches.filter((o) => o.startLine <= targetLine && o.endLine >= targetLine);
+    if (intersecting.length === 0) {
+      throw new Error(
+        `op[${index}] range ${range.startLine}-${range.endLine} selected ${rangeMatches.length} occurrence(s) of ${JSON.stringify(
+          op.target,
+        )} but none intersect line ${op.line}` + formatOccurrenceLines(rangeMatches, lines),
+      );
+    }
+    return rangeMatches;
   }
-  if (range.endLine < range.startLine) {
-    throw new Error(`op[${index}] invalid range: lines ${range.startLine}-${range.endLine} (endLine < startLine)`);
+
+  // neither line nor range: target must be unique in the file.
+  if (all.length === 0) {
+    throw new Error(targetNotFoundMessage(index, op.target, lines, text));
   }
-  if (range.startLine > lines.length || range.endLine > lines.length) {
-    throw new Error(`op[${index}] range ${range.startLine}-${range.endLine} is out of bounds for file with ${lines.length} line(s)`);
-  }
-  const rangeStart = range.startLine - 1;
-  const rangeEnd = range.endLine - 1;
-  const matches = selectOccurrences(occurrences, (o) => o.startLine >= rangeStart && o.endLine <= rangeEnd);
-  if (matches.length === 0) {
+  if (all.length > 1) {
     throw new Error(
-      `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0` +
+      `op[${index}] target ${JSON.stringify(op.target)} occurs ${all.length} times in the file; provide line or range to select one` +
         formatOccurrenceLines(all, lines),
     );
   }
-  return matches;
+  return [all[0]!];
 }
 
 function replaceRanges(text: string, occurrences: Occurrence[], replacement: string): string {
