@@ -836,6 +836,17 @@ describe("target edits", () => {
     assert.match(result, /2\|\s+port: 8080/);
   });
 
+
+  it("trim replace does not consume the following line", async () => {
+    const original = "function foo() {\n  bar();\n}\n";
+    const file = await tempFile("sample.ts", original);
+
+    await applyTargetEdits(file, [
+      { type: "replace", target: "  bar();", line: 2, matchMode: "trim", replacement: "  baz();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function foo() {\n  baz();\n}\n");
+  });
   it("preserves original indentation when replacing with matchMode=trim", async () => {
     const original = "function foo() {\n    bar();\n}\n";
     const file = await tempFile("sample.ts", original);

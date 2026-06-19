@@ -125,11 +125,7 @@ function findTrimmedOccurrences(text: string, target: string): Occurrence[] {
       const lastLine = textLines[i + targetLineCount - 1]!;
       const start = firstLine.start + trimLeadingLength(firstLine.text);
       let end = Math.max(start, lastLine.end - trimTrailingLength(lastLine.text));
-      // For a single-line target, don't consume the terminating newline so
-      // a non-newline replacement doesn't join the following line.
-      if (targetLineCount === 1 && !target.endsWith("\n") && end > start && text[end] === "\n") {
-        end = end + 1;
-      }
+
       occurrences.push({ start, end, startLine: 0, endLine: 0 });
     }
   }
