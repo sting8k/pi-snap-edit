@@ -54,6 +54,7 @@ function lineIndexAt(offsets: number[], lines: string[], offset: number): number
 type TargetOccurrences = {
   raw: Occurrence[];
   fallback: Occurrence[];
+  trimmed: Occurrence[];
 };
 
 function findNeedleOccurrences(text: string, needle: string): Occurrence[] {
@@ -66,15 +67,68 @@ function findNeedleOccurrences(text: string, needle: string): Occurrence[] {
   return occurrences;
 }
 
-function findTargetOccurrences(text: string, target: string): TargetOccurrences {
+type LineWithOffset = {
+  text: string;
+  start: number;
+  end: number;
+};
+
+function splitLinesWithOffsets(text: string): LineWithOffset[] {
+  const lines: LineWithOffset[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\n") {
+      lines.push({ text: text.slice(start, i), start, end: i + 1 });
+      start = i + 1;
+    }
+  }
+  if (start <= text.length) {
+    lines.push({ text: text.slice(start), start, end: text.length });
+  }
+  return lines;
+}
+
+function findTrimmedOccurrences(text: string, target: string): Occurrence[] {
+  const targetLines = target.split("\n");
+  // Ignore trailing empty/whitespace-only lines that often come from copying a
+  // block including its terminating newline. Trim matching is meant to be
+  // whitespace-tolerant, so a dangling newline should not break the match.
+  while (targetLines.length > 1 && targetLines[targetLines.length - 1]!.trim() === "") {
+    targetLines.pop();
+  }
+  const targetLineCount = targetLines.length;
+  if (targetLineCount === 0) return [];
+
+  const textLines = splitLinesWithOffsets(text);
+  const occurrences: Occurrence[] = [];
+
+  for (let i = 0; i <= textLines.length - targetLineCount; i++) {
+    let matches = true;
+    for (let j = 0; j < targetLineCount; j++) {
+      if (textLines[i + j]!.text.trim() !== targetLines[j]!.trim()) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      const start = textLines[i]!.start;
+      const lastLine = textLines[i + targetLineCount - 1]!;
+      occurrences.push({ start, end: lastLine.end, startLine: 0, endLine: 0 });
+    }
+  }
+  return occurrences;
+}
+
+function findTargetOccurrences(text: string, target: string, matchMode: "exact" | "trim" = "exact"): TargetOccurrences {
   const raw = findNeedleOccurrences(text, target);
   const unescaped = unescapeLiteralSequences(target);
   const fallback = unescaped === target ? [] : findNeedleOccurrences(text, unescaped);
-  return { raw, fallback };
+  const trimmed = matchMode === "trim" ? findTrimmedOccurrences(text, target) : [];
+  return { raw, fallback, trimmed };
 }
 
 function allOccurrences(occurrences: TargetOccurrences): Occurrence[] {
-  return [...occurrences.raw, ...occurrences.fallback].sort((left, right) => left.start - right.start);
+  return [...occurrences.raw, ...occurrences.fallback, ...occurrences.trimmed].sort((left, right) => left.start - right.start);
 }
 
 function selectOccurrences(
@@ -82,7 +136,10 @@ function selectOccurrences(
   selector: (occurrence: Occurrence) => boolean,
 ): Occurrence[] {
   const rawMatches = occurrences.raw.filter(selector);
-  return rawMatches.length > 0 ? rawMatches : occurrences.fallback.filter(selector);
+  if (rawMatches.length > 0) return rawMatches;
+  const fallbackMatches = occurrences.fallback.filter(selector);
+  if (fallbackMatches.length > 0) return fallbackMatches;
+  return occurrences.trimmed.filter(selector);
 }
 
 function targetNotFoundMessage(index: number, target: string, lines: string[], text: string): string {
@@ -135,12 +192,13 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
   if (op.target.length === 0) throw new Error(`op[${index}] target must not be empty`);
   if (op.target.includes("\r")) throw new Error(`op[${index}] target must use \\n line endings, not \\r`);
 
-  const occurrences = findTargetOccurrences(text, op.target);
-  if (occurrences.raw.length === 0 && occurrences.fallback.length === 0) {
+  const occurrences = findTargetOccurrences(text, op.target, op.matchMode ?? "exact");
+  if (occurrences.raw.length === 0 && occurrences.fallback.length === 0 && occurrences.trimmed.length === 0) {
     throw new Error(targetNotFoundMessage(index, op.target, lines, text));
   }
   resolveOccurrenceLines(occurrences.raw, lines, offsets);
   resolveOccurrenceLines(occurrences.fallback, lines, offsets);
+  resolveOccurrenceLines(occurrences.trimmed, lines, offsets);
   const all = allOccurrences(occurrences);
 
   if (op.type === "insert_before" || op.type === "insert_after") {

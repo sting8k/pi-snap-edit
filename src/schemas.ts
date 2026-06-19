@@ -40,6 +40,10 @@ const LineRange = Type.Object({
 
 const TargetBase = {
   target: Type.String({ minLength: 1, description: "Exact literal target text to find. Use \\n for multi-line targets." }),
+  matchMode: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], {
+    default: "exact",
+    description: "Match mode. exact requires exact whitespace; trim compares lines after trimming leading/trailing whitespace (original indentation is still preserved on write).",
+  })),
 };
 
 export const TargetEditParams = Type.Object({
@@ -94,6 +98,7 @@ export type TargetReplaceOp = {
   line?: number;
   range?: { startLine: number; endLine: number };
   replacement: string;
+  matchMode?: "exact" | "trim";
 };
 
 export type TargetDeleteOp = {
@@ -101,6 +106,7 @@ export type TargetDeleteOp = {
   target: string;
   line?: number;
   range?: { startLine: number; endLine: number };
+  matchMode?: "exact" | "trim";
 };
 
 export type TargetInsertBeforeOp = {
@@ -108,6 +114,7 @@ export type TargetInsertBeforeOp = {
   target: string;
   line: number;
   lines: string[];
+  matchMode?: "exact" | "trim";
 };
 
 export type TargetInsertAfterOp = {
@@ -115,6 +122,7 @@ export type TargetInsertAfterOp = {
   target: string;
   line: number;
   lines: string[];
+  matchMode?: "exact" | "trim";
 };
 
 export type TargetEditOp = TargetReplaceOp | TargetDeleteOp | TargetInsertBeforeOp | TargetInsertAfterOp;
