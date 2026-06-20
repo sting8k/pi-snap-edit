@@ -1,3 +1,30 @@
+## pi-snap-edit v4.2.0
+
+Minor release. Adds `matchMode=trim` for whitespace-tolerant target matching, relaxes `line`/`range` selector rules for `replace`/`delete`, and surfaces multi-line diagnostic hints when a multi-line target fails to match.
+
+### Changes
+
+- **`matchMode: "exact" | "trim"` for `target_edit`:** opt-in line-level matching that compares content after `trim()` per line, preserving original indentation on replace/delete. Non-whitespace content must still match exactly; only leading/trailing line whitespace is forgiven. Match priority: `exact > unescape > trim`. Replaces/deletes are bounded to the trimmed content only — never consumes the line-terminating newline. Replacement leading/trailing whitespace is stripped in trim mode to avoid double-indent when agents copy indentation into the replacement.
+- **Relaxed `line`/`range` selector rules:** four modes now allowed on `replace`/`delete` — `line` only (1 occurrence intersect line), `range` only (every occurrence in range), both (range selects + line is a validation hint: at least one occurrence must intersect it), neither (target must be unique in the file, else fail with a clear message). Removes the prior mutually-exclusive constraint that caused awkward agent errors.
+- **Multi-line diagnostic hints:** when a multi-line `target_edit` target fails to match, errors now include first/last line near matches (dice coefficient) and anchor block candidates where first + last lines match by trim. Diagnostic only; never auto-applied. Anchor block display capped at 10 lines (3 + ellipsis + 3) to keep output bounded.
+- **Test infrastructure:** added `test/eval-guidelines.ts` standalone eval harness to measure which prompt guidelines actually impact success rate (25 tasks × 12 categories × informed/naive variants).
+- **README:** aligned with the new target edit semantics and four selector modes.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (76 tests).
+- `git diff --check` passed.
+- `npm pack --dry-run` passed.
+
+---
+
 ## pi-snap-edit v4.1.0
 
 Minor release. Improves escape-heavy edit matching and preserves UTF-8 BOM across edit tools and numbered read output.
