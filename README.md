@@ -42,11 +42,12 @@ Tool behavior:
 - `quick_edit` defaults to exact guard matching. Use `expectedStartLineMatch: "trim"` plus `preserveIndent: true` when indentation/trailing whitespace is uncertain and replacement lines should inherit the current line indentation.
 - `substitute_edit` registration is currently disabled; its engine remains exported for now.
 - `target_edit` performs ordered exact-target operations: `replace`, `delete`, `insert_before`, and `insert_after`.
-- `replace` and `delete` require exactly one selector: `line` for a single occurrence, or `range` for every occurrence fully inside an inclusive line range.
+- For `replace` and `delete`, selectors are flexible: omit both `line`/`range` when the target is unique in the file; use `line` for one occurrence on a line; use `range` for every occurrence fully inside an inclusive line range; or combine `line` + `range` to scope by range and verify one selected occurrence intersects the line.
 - `insert_before` and `insert_after` require `line` and insert full lines before/after the target occurrence.
+- `target_edit` defaults to exact substring matching. Set `matchMode: "trim"` when indentation or trailing whitespace may differ: it compares whole lines after trimming, bounds the edit to the trimmed content so original indentation is preserved, strips replacement edge whitespace, rejects whitespace-only trim targets, and does not consume the following line ending.
 - Line endings are preserved, including CRLF and no-trailing-newline files.
 - Invalid `quick_edit` ranges/overlaps, invalid `target_edit` selectors/ranges, target misses, and `expectedStartLine` mismatches are rejected without partial writes.
-- Failure hints may list moved/close matches with line numbers, but fuzzy hints are diagnostic-only and never applied automatically.
+- Failure hints may list moved/close matches with line numbers. Multi-line target misses can include first-line near matches, last-line near matches, and capped anchor block candidates. Fuzzy hints are diagnostic-only and never applied automatically.
 
 ## `target_edit` quick shape
 
@@ -64,7 +65,7 @@ Tool behavior:
 }
 ```
 
-Rules: `target` is exact literal text; `replace`/`delete` choose exactly one of `line` or `range`; `insert_before`/`insert_after` require `line`; `replace` uses `replacement` text.
+Rules: `target` is exact literal text by default; use `matchMode: "trim"` for whole-line whitespace-tolerant matching. `replace`/`delete` may use no selector, `line`, `range`, or `line` + `range` as described above. `insert_before`/`insert_after` require `line`. `replace` uses `replacement` text.
 
 ## Install
 
@@ -77,3 +78,13 @@ Or load locally from this checkout:
 ```bash
 pi -e ./src/index.ts
 ```
+
+## Eval harness
+
+This repo includes a small prompt-guideline eval harness. It compares "informed" tool calls that follow the documented guidance against simpler naive calls, then reports which guidelines changed outcomes.
+
+```bash
+npx tsx test/eval-guidelines.ts
+```
+
+Use it as a documentation sanity check when changing tool guidance or edit semantics; it is not a replacement for `npm test`.

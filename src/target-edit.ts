@@ -1,6 +1,6 @@
 import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
-import { formatCloseLineMatches } from "./fuzzy.js";
+import { formatCloseLineMatches, formatMultiLineTargetHints } from "./fuzzy.js";
 import { formatFailureMessage, unescapeLiteralSequences } from "./match-helpers.js";
 import type { TargetEditOp, TargetInsertBeforeOp, TargetInsertAfterOp } from "./schemas.js";
 import { detectLineEnding, joinBom, splitBom, splitLines } from "./text.js";
@@ -15,6 +15,7 @@ type Occurrence = {
   end: number;
   startLine: number;
   endLine: number;
+  kind: "raw" | "fallback" | "trimmed";
 };
 
 function toNormalized(state: LineState): string {
@@ -54,27 +55,121 @@ function lineIndexAt(offsets: number[], lines: string[], offset: number): number
 type TargetOccurrences = {
   raw: Occurrence[];
   fallback: Occurrence[];
+  trimmed: Occurrence[];
 };
 
 function findNeedleOccurrences(text: string, needle: string): Occurrence[] {
   const occurrences: Occurrence[] = [];
   let index = text.indexOf(needle);
   while (index !== -1) {
-    occurrences.push({ start: index, end: index + needle.length, startLine: 0, endLine: 0 });
+    occurrences.push({ start: index, end: index + needle.length, startLine: 0, endLine: 0, kind: "raw" });
     index = text.indexOf(needle, index + Math.max(1, needle.length));
   }
   return occurrences;
 }
 
-function findTargetOccurrences(text: string, target: string): TargetOccurrences {
+type LineWithOffset = {
+  text: string;
+  start: number;
+  end: number;
+};
+
+function splitLinesWithOffsets(text: string): LineWithOffset[] {
+  const lines: LineWithOffset[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\n") {
+      lines.push({ text: text.slice(start, i), start, end: i + 1 });
+      start = i + 1;
+    }
+  }
+  if (start < text.length) {
+    lines.push({ text: text.slice(start), start, end: text.length });
+  }
+  return lines;
+}
+
+function trimLeadingLength(s: string): number {
+  return s.length - s.trimStart().length;
+}
+
+function trimTrailingLength(s: string): number {
+  return s.length - s.trimEnd().length;
+}
+
+function trimmedTargetLines(target: string): string[] {
+  const targetLines = target.split("\n");
+  // Ignore trailing empty/whitespace-only lines that often come from copying a
+  // block including its terminating newline. Trim matching is meant to be
+  // whitespace-tolerant, so a dangling newline should not break the match.
+  while (targetLines.length > 1 && targetLines[targetLines.length - 1]!.trim() === "") {
+    targetLines.pop();
+  }
+  return targetLines;
+}
+
+function hasMeaningfulTrimTarget(target: string): boolean {
+  return trimmedTargetLines(target).some((line) => line.trim().length > 0);
+}
+
+function findTrimmedOccurrences(text: string, target: string): Occurrence[] {
+  const targetLines = trimmedTargetLines(target);
+  const targetLineCount = targetLines.length;
+  if (targetLineCount === 0 || !targetLines.some((line) => line.trim().length > 0)) return [];
+
+  const textLines = splitLinesWithOffsets(text);
+  const occurrences: Occurrence[] = [];
+
+  for (let i = 0; i <= textLines.length - targetLineCount; i++) {
+    let matches = true;
+    for (let j = 0; j < targetLineCount; j++) {
+      if (textLines[i + j]!.text.trim() !== targetLines[j]!.trim()) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) {
+      // Bound the occurrence to the trimmed content so that original indentation
+      // and line endings are preserved on replace/delete.
+      const firstLine = textLines[i]!;
+      const lastLine = textLines[i + targetLineCount - 1]!;
+      const start = firstLine.start + trimLeadingLength(firstLine.text);
+      // Exclude the terminating newline (if any) so the occurrence does not
+      // consume the line ending of the last matched line.
+      const hasNewline = lastLine.end > 0 && text[lastLine.end - 1] === "\n";
+      const contentEnd = lastLine.end - (hasNewline ? 1 : 0);
+      const end = Math.max(start, contentEnd - trimTrailingLength(lastLine.text));
+      occurrences.push({ start, end, startLine: 0, endLine: 0, kind: "trimmed" });
+    }
+  }
+  return occurrences;
+}
+
+function findTargetOccurrences(text: string, target: string, matchMode: "exact" | "trim" = "exact"): TargetOccurrences {
+  if (matchMode === "trim") {
+    // In trim mode we do line-level whitespace-tolerant matching. Ignore exact
+    // substring matches so that a target like "bar();" doesn't accidentally match
+    // inside an indented line and change the effective column.
+    const trimmed = findTrimmedOccurrences(text, target);
+    const unescaped = unescapeLiteralSequences(target);
+    const fallback = unescaped === target ? [] : findTrimmedOccurrences(text, unescaped).map((o) => ({ ...o, kind: "fallback" as const }));
+    return { raw: [], fallback, trimmed };
+  }
   const raw = findNeedleOccurrences(text, target);
   const unescaped = unescapeLiteralSequences(target);
-  const fallback = unescaped === target ? [] : findNeedleOccurrences(text, unescaped);
-  return { raw, fallback };
+  const fallback = unescaped === target ? [] : findNeedleOccurrences(text, unescaped).map((o) => ({ ...o, kind: "fallback" as const }));
+  return { raw, fallback, trimmed: [] };
+}
+
+function overlaps(left: Occurrence, right: Occurrence): boolean {
+  return left.start < right.end && right.start < left.end;
 }
 
 function allOccurrences(occurrences: TargetOccurrences): Occurrence[] {
-  return [...occurrences.raw, ...occurrences.fallback].sort((left, right) => left.start - right.start);
+  const exact = [...occurrences.raw, ...occurrences.fallback];
+  // Only include trimmed occurrences that don't overlap with exact matches.
+  const trimmed = occurrences.trimmed.filter((trim) => !exact.some((ex) => overlaps(ex, trim)));
+  return [...exact, ...trimmed].sort((left, right) => left.start - right.start);
 }
 
 function selectOccurrences(
@@ -82,7 +177,10 @@ function selectOccurrences(
   selector: (occurrence: Occurrence) => boolean,
 ): Occurrence[] {
   const rawMatches = occurrences.raw.filter(selector);
-  return rawMatches.length > 0 ? rawMatches : occurrences.fallback.filter(selector);
+  if (rawMatches.length > 0) return rawMatches;
+  const fallbackMatches = occurrences.fallback.filter(selector);
+  if (fallbackMatches.length > 0) return fallbackMatches;
+  return occurrences.trimmed.filter(selector);
 }
 
 function targetNotFoundMessage(index: number, target: string, lines: string[], text: string): string {
@@ -90,6 +188,10 @@ function targetNotFoundMessage(index: number, target: string, lines: string[], t
   const closeRaw = formatCloseLineMatches(lines, target, "close target matches");
   const closeUnescaped = unescaped !== target
     ? formatCloseLineMatches(lines, unescaped, "close target matches (after unescaping)")
+    : "";
+  const multiLineRaw = formatMultiLineTargetHints(lines, target);
+  const multiLineUnescaped = unescaped !== target && unescaped.includes("\n")
+    ? formatMultiLineTargetHints(lines, unescaped)
     : "";
   const escapeHint = unescaped !== target && text.includes(unescaped) && !text.includes(target)
     ? "hint: target uses escape sequences; the file matches the unescaped form — fix escapes or use literal newlines in target."
@@ -99,6 +201,8 @@ function targetNotFoundMessage(index: number, target: string, lines: string[], t
   return formatFailureMessage(`op[${index}] target not found: ${JSON.stringify(target)}`, [
     closeRaw,
     closeUnescaped,
+    multiLineRaw,
+    multiLineUnescaped,
     escapeHint,
   ]);
 }
@@ -128,13 +232,17 @@ function validateLineSelector(line: unknown, lineCount: number, index: number): 
 function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], offsets: number[], index: number): Occurrence[] {
   if (op.target.length === 0) throw new Error(`op[${index}] target must not be empty`);
   if (op.target.includes("\r")) throw new Error(`op[${index}] target must use \\n line endings, not \\r`);
+  if (op.matchMode === "trim" && !hasMeaningfulTrimTarget(op.target)) {
+    throw new Error(`op[${index}] target must contain non-whitespace content when matchMode is trim`);
+  }
 
-  const occurrences = findTargetOccurrences(text, op.target);
-  if (occurrences.raw.length === 0 && occurrences.fallback.length === 0) {
+  const occurrences = findTargetOccurrences(text, op.target, op.matchMode ?? "exact");
+  if (occurrences.raw.length === 0 && occurrences.fallback.length === 0 && occurrences.trimmed.length === 0) {
     throw new Error(targetNotFoundMessage(index, op.target, lines, text));
   }
   resolveOccurrenceLines(occurrences.raw, lines, offsets);
   resolveOccurrenceLines(occurrences.fallback, lines, offsets);
+  resolveOccurrenceLines(occurrences.trimmed, lines, offsets);
   const all = allOccurrences(occurrences);
 
   if (op.type === "insert_before" || op.type === "insert_after") {
@@ -157,11 +265,28 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
 
   const hasLine = op.line !== undefined;
   const hasRange = op.range !== undefined;
-  if (hasLine === hasRange) {
-    throw new Error(`op[${index}] must provide exactly one of line or range`);
+
+  // Helper to validate range bounds and return selected occurrences.
+  function selectRange(range: { startLine: number; endLine: number }): Occurrence[] {
+    if (!Number.isInteger(range.startLine) || range.startLine < 1) {
+      throw new Error(`op[${index}] range.startLine must be a 1-indexed line number`);
+    }
+    if (!Number.isInteger(range.endLine) || range.endLine < 1) {
+      throw new Error(`op[${index}] range.endLine must be a 1-indexed line number`);
+    }
+    if (range.endLine < range.startLine) {
+      throw new Error(`op[${index}] invalid range: lines ${range.startLine}-${range.endLine} (endLine < startLine)`);
+    }
+    if (range.startLine > lines.length || range.endLine > lines.length) {
+      throw new Error(`op[${index}] range ${range.startLine}-${range.endLine} is out of bounds for file with ${lines.length} line(s)`);
+    }
+    const rangeStart = range.startLine - 1;
+    const rangeEnd = range.endLine - 1;
+    return selectOccurrences(occurrences, (o) => o.startLine >= rangeStart && o.endLine <= rangeEnd);
   }
 
-  if (hasLine) {
+  // line only: exactly one occurrence intersecting the line.
+  if (hasLine && !hasRange) {
     const targetLine = validateLineSelector(op.line, lines.length, index);
     const matches = selectOccurrences(occurrences, (o) => o.startLine <= targetLine && o.endLine >= targetLine);
     if (matches.length === 0) {
@@ -179,35 +304,81 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
     return [matches[0]!];
   }
 
-  const range = op.range!;
-  if (!Number.isInteger(range.startLine) || range.startLine < 1) {
-    throw new Error(`op[${index}] range.startLine must be a 1-indexed line number`);
+  // range only: every occurrence fully inside the inclusive range.
+  if (!hasLine && hasRange) {
+    const range = op.range!;
+    const matches = selectRange(range);
+    if (matches.length === 0) {
+      throw new Error(
+        `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0` +
+          formatOccurrenceLines(all, lines),
+      );
+    }
+    return matches;
   }
-  if (!Number.isInteger(range.endLine) || range.endLine < 1) {
-    throw new Error(`op[${index}] range.endLine must be a 1-indexed line number`);
+
+  // both line and range: range selects all occurrences inside the range, then
+  // verify at least one of them intersects the provided line (a validation hint).
+  if (hasLine && hasRange) {
+    const range = op.range!;
+    const targetLine = validateLineSelector(op.line, lines.length, index);
+    const rangeMatches = selectRange(range);
+    if (rangeMatches.length === 0) {
+      throw new Error(
+        `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0` +
+          formatOccurrenceLines(all, lines),
+      );
+    }
+    const intersecting = rangeMatches.filter((o) => o.startLine <= targetLine && o.endLine >= targetLine);
+    if (intersecting.length === 0) {
+      throw new Error(
+        `op[${index}] range ${range.startLine}-${range.endLine} selected ${rangeMatches.length} occurrence(s) of ${JSON.stringify(
+          op.target,
+        )} but none intersect line ${op.line}` + formatOccurrenceLines(rangeMatches, lines),
+      );
+    }
+    return rangeMatches;
   }
-  if (range.endLine < range.startLine) {
-    throw new Error(`op[${index}] invalid range: lines ${range.startLine}-${range.endLine} (endLine < startLine)`);
+
+  // neither line nor range: target must be unique in the file.
+  if (all.length === 0) {
+    throw new Error(targetNotFoundMessage(index, op.target, lines, text));
   }
-  if (range.startLine > lines.length || range.endLine > lines.length) {
-    throw new Error(`op[${index}] range ${range.startLine}-${range.endLine} is out of bounds for file with ${lines.length} line(s)`);
-  }
-  const rangeStart = range.startLine - 1;
-  const rangeEnd = range.endLine - 1;
-  const matches = selectOccurrences(occurrences, (o) => o.startLine >= rangeStart && o.endLine <= rangeEnd);
-  if (matches.length === 0) {
+  if (all.length > 1) {
     throw new Error(
-      `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0` +
+      `op[${index}] target ${JSON.stringify(op.target)} occurs ${all.length} times in the file; provide line or range to select one` +
         formatOccurrenceLines(all, lines),
     );
   }
-  return matches;
+  return [all[0]!];
 }
 
-function replaceRanges(text: string, occurrences: Occurrence[], replacement: string): string {
+function trimReplacementEdges(replacement: string): string {
+  // Remove leading whitespace from the first line and trailing whitespace/empty
+  // lines from the end while preserving internal newlines. This lets trim mode
+  // tolerate copied indentation in the replacement without double-indenting or
+  // consuming surrounding line endings.
+  const lines = replacement.split("\n");
+  if (lines.length === 0) return replacement;
+  const firstLine = lines[0];
+  if (firstLine !== undefined) lines[0] = firstLine.trimStart();
+  // Drop trailing whitespace-only lines (from copied blank lines at the edge).
+  while (lines.length > 1 && lines[lines.length - 1]?.trim() === "") {
+    lines.pop();
+  }
+  const lastLine = lines[lines.length - 1];
+  if (lastLine !== undefined) lines[lines.length - 1] = lastLine.trimEnd();
+  return lines.join("\n");
+}
+
+function replaceRanges(text: string, occurrences: Occurrence[], replacement: string, matchMode?: "exact" | "trim"): string {
+  // In trim mode, the file's surrounding whitespace is preserved by the
+  // occurrence boundary, so the replacement should be treated as trimmed
+  // content. Exact mode keeps the replacement literal.
+  const effectiveReplacement = matchMode === "trim" ? trimReplacementEdges(replacement) : replacement;
   let updated = text;
   for (const occurrence of [...occurrences].reverse()) {
-    updated = `${updated.slice(0, occurrence.start)}${replacement}${updated.slice(occurrence.end)}`;
+    updated = `${updated.slice(0, occurrence.start)}${effectiveReplacement}${updated.slice(occurrence.end)}`;
   }
   return updated;
 }
@@ -307,7 +478,7 @@ export async function applyTargetEdits(
         state = applyInsert(state, occurrences, op);
         break;
       case "replace":
-        state = fromNormalized(replaceRanges(text, occurrences, op.replacement));
+        state = fromNormalized(replaceRanges(text, occurrences, op.replacement, op.matchMode));
         break;
       case "delete":
         state = fromNormalized(replaceRanges(text, occurrences, ""));
