@@ -8,14 +8,22 @@ export const QuickEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
   edits: Type.Array(
     Type.Object({
-      start: Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF." }),
-      end: Type.Optional(Type.Integer({ minimum: 1, description: "Optional 1-indexed inclusive end line number." })),
-      expectedStartLine: Type.String({ description: "Guard for the current start line. Exact by default; set expectedStartLineMatch=trim to ignore leading/trailing whitespace. JSON-style escape sequences (e.g. \\n, \\t) are unescaped before comparing." }),
-      expectedStartLineMatch: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], { description: "How to compare expectedStartLine to the current start line. Defaults to exact; trim ignores leading/trailing whitespace." })),
-      preserveIndent: Type.Optional(Type.Boolean({ description: "When true, prefixes the current start line indentation to each non-empty replacement line. Use unindented replacement lines." })),
-      lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it." }),
+      start: Type.Union([
+        Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF (legacy; prefer start=\"eof\")." }),
+        Type.Literal("eof", { description: "Insert lines at end of file. Prefer this over start=lineCount+1. expectedStartLine is optional for eof." }),
+      ], { description: "1-indexed start line, or \"eof\" to append at end of file." }),
+      end: Type.Optional(Type.Integer({ minimum: 1, description: "Optional 1-indexed inclusive end line number. Not used with start=\"eof\"." })),
+      expectedStartLine: Type.Optional(Type.String({ description: "Guard for the current start line (required except for start=\"eof\" or empty-file insert). Exact by default; use whitespace=\"indent_tolerant\" or expectedStartLineMatch=trim for whitespace-tolerant guards. JSON-style escape sequences (e.g. \\n, \\t) are unescaped before comparing." })),
+      expectedStartLineMatch: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], { description: "How to compare expectedStartLine/expectedEndLine. Defaults to exact unless whitespace is indent_tolerant (then trim). trim ignores leading/trailing whitespace." })),
+      expectedEndLine: Type.Optional(Type.String({ description: "Optional guard for the current end line content. Uses the same match mode as expectedStartLine. Recommended for multi-line range edits." })),
+      expectedLineCount: Type.Optional(Type.Integer({ minimum: 1, description: "Optional guard: expected number of lines in the start..end range (end-start+1). Rejects if the span size differs." })),
+      whitespace: Type.Optional(Type.Union([Type.Literal("strict"), Type.Literal("indent_tolerant")], {
+        description: "Whitespace policy. strict (default): exact guards, no indent rewrite. indent_tolerant: trim guards + preserveIndent for replacement lines. Explicit expectedStartLineMatch/preserveIndent override the matching parts of this shortcut.",
+      })),
+      preserveIndent: Type.Optional(Type.Boolean({ description: "When true, prefixes the current start line indentation to each non-empty replacement line. Use unindented replacement lines. Defaults true when whitespace is indent_tolerant." })),
+      lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it. For start=\"eof\", must be non-empty." }),
     }),
-    { minItems: 1, description: "Line-number edits to apply atomically. Use start=lineCount+1 with no end to insert at EOF." },
+    { minItems: 1, description: "Line-number edits to apply atomically. Use start=\"eof\" (preferred) or start=lineCount+1 to insert at EOF." },
   ),
 });
 
@@ -31,11 +39,6 @@ export const SubstituteEditParams = Type.Object({
     }),
     { minItems: 1, description: "Ordered literal substitutions. Applied sequentially; count is checked before each substitution." },
   ),
-});
-
-const LineRange = Type.Object({
-  startLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line." }),
-  endLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive end line." }),
 });
 
 const TargetBase = {
@@ -128,10 +131,13 @@ export type TargetInsertAfterOp = {
 export type TargetEditOp = TargetReplaceOp | TargetDeleteOp | TargetInsertBeforeOp | TargetInsertAfterOp;
 
 export type Edit = {
-  start: number;
+  start: number | "eof";
   end?: number;
-  expectedStartLine: string;
+  expectedStartLine?: string;
   expectedStartLineMatch?: "exact" | "trim";
+  expectedEndLine?: string;
+  expectedLineCount?: number;
+  whitespace?: "strict" | "indent_tolerant";
   preserveIndent?: boolean;
   lines: string[];
 };

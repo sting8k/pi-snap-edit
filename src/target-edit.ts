@@ -1,7 +1,8 @@
 import { promises as fs } from "node:fs";
 import { CONTEXT_LINES, type ContextRange, type EditDiff, formatContexts, formatDiffs } from "./diff.js";
-import { formatCloseLineMatches, formatMultiLineTargetHints } from "./fuzzy.js";
-import { formatFailureMessage, unescapeLiteralSequences } from "./match-helpers.js";
+import { throwEditError, type EditFailureCandidate } from "./edit-error.js";
+import { closeLineMatches, formatCloseLineMatches, formatMultiLineTargetHints } from "./fuzzy.js";
+import { unescapeLiteralSequences } from "./match-helpers.js";
 import type { TargetEditOp, TargetInsertBeforeOp, TargetInsertAfterOp } from "./schemas.js";
 import { detectLineEnding, joinBom, splitBom, splitLines } from "./text.js";
 
@@ -183,7 +184,15 @@ function selectOccurrences(
   return occurrences.trimmed.filter(selector);
 }
 
-function targetNotFoundMessage(index: number, target: string, lines: string[], text: string): string {
+function targetCandidates(lines: string[], needle: string): EditFailureCandidate[] {
+  return closeLineMatches(lines, needle).map((match) => ({
+    line: match.lineNumber,
+    text: match.line.slice(0, 200),
+    score: Number(match.score.toFixed(3)),
+  }));
+}
+
+function throwTargetNotFound(index: number, target: string, lines: string[], text: string): never {
   const unescaped = unescapeLiteralSequences(target);
   const closeRaw = formatCloseLineMatches(lines, target, "close target matches");
   const closeUnescaped = unescaped !== target
@@ -198,13 +207,41 @@ function targetNotFoundMessage(index: number, target: string, lines: string[], t
     : unescaped !== target && !text.includes(unescaped)
       ? "hint: check escape sequences in target (e.g. \\n, \\t)."
       : undefined;
-  return formatFailureMessage(`op[${index}] target not found: ${JSON.stringify(target)}`, [
-    closeRaw,
-    closeUnescaped,
-    multiLineRaw,
-    multiLineUnescaped,
-    escapeHint,
-  ]);
+
+  const candidates = targetCandidates(lines, target);
+  const unescapedCandidates = unescaped !== target ? targetCandidates(lines, unescaped) : [];
+  const uniqueCandidates = [...candidates];
+  for (const candidate of unescapedCandidates) {
+    if (!uniqueCandidates.some((existing) => existing.line === candidate.line && existing.text === candidate.text)) {
+      uniqueCandidates.push(candidate);
+    }
+  }
+
+  let suggested: Record<string, unknown> | undefined;
+  if (unescaped !== target && text.includes(unescaped) && !text.includes(target)) {
+    suggested = { target: unescaped };
+  } else if (uniqueCandidates.length === 1) {
+    suggested = { line: uniqueCandidates[0]!.line, target };
+  }
+
+  throwEditError(
+    {
+      error_code: "TARGET_NOT_FOUND",
+      message: `op[${index}] target not found: ${JSON.stringify(target)}`,
+      op_index: index,
+      expected: target,
+      ...(uniqueCandidates.length > 0 ? { candidates: uniqueCandidates } : {}),
+      ...(suggested ? { suggested } : {}),
+    },
+    [closeRaw, closeUnescaped, multiLineRaw, multiLineUnescaped, escapeHint],
+  );
+}
+
+function occurrenceCandidates(occurrences: Occurrence[], lines: string[]): EditFailureCandidate[] {
+  return occurrences.slice(0, 10).map((occurrence) => ({
+    line: occurrence.startLine + 1,
+    text: (lines[occurrence.startLine] ?? "").slice(0, 200),
+  }));
 }
 
 function resolveOccurrenceLines(occurrences: Occurrence[], lines: string[], offsets: number[]): void {
@@ -221,24 +258,50 @@ function formatOccurrenceLines(occurrences: Occurrence[], lines: string[]): stri
 }
 function validateLineSelector(line: unknown, lineCount: number, index: number): number {
   if (typeof line !== "number" || !Number.isInteger(line) || line < 1) {
-    throw new Error(`op[${index}] line must be a 1-indexed line number`);
+    throwEditError({
+      error_code: "VALIDATION",
+      message: `op[${index}] line must be a 1-indexed line number`,
+      op_index: index,
+    });
   }
   if (line > lineCount) {
-    throw new Error(`op[${index}] line ${line} is out of bounds for file with ${lineCount} line(s)`);
+    throwEditError({
+      error_code: "RANGE_OUT_OF_BOUNDS",
+      message: `op[${index}] line ${line} is out of bounds for file with ${lineCount} line(s)`,
+      op_index: index,
+      at_line: line,
+      details: { line_count: lineCount },
+    });
   }
   return line - 1;
 }
 
 function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], offsets: number[], index: number): Occurrence[] {
-  if (op.target.length === 0) throw new Error(`op[${index}] target must not be empty`);
-  if (op.target.includes("\r")) throw new Error(`op[${index}] target must use \\n line endings, not \\r`);
+  if (op.target.length === 0) {
+    throwEditError({
+      error_code: "VALIDATION",
+      message: `op[${index}] target must not be empty`,
+      op_index: index,
+    });
+  }
+  if (op.target.includes("\r")) {
+    throwEditError({
+      error_code: "VALIDATION",
+      message: `op[${index}] target must use \\n line endings, not \\r`,
+      op_index: index,
+    });
+  }
   if (op.matchMode === "trim" && !hasMeaningfulTrimTarget(op.target)) {
-    throw new Error(`op[${index}] target must contain non-whitespace content when matchMode is trim`);
+    throwEditError({
+      error_code: "VALIDATION",
+      message: `op[${index}] target must contain non-whitespace content when matchMode is trim`,
+      op_index: index,
+    });
   }
 
   const occurrences = findTargetOccurrences(text, op.target, op.matchMode ?? "exact");
   if (occurrences.raw.length === 0 && occurrences.fallback.length === 0 && occurrences.trimmed.length === 0) {
-    throw new Error(targetNotFoundMessage(index, op.target, lines, text));
+    throwTargetNotFound(index, op.target, lines, text);
   }
   resolveOccurrenceLines(occurrences.raw, lines, offsets);
   resolveOccurrenceLines(occurrences.fallback, lines, offsets);
@@ -249,15 +312,30 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
     const targetLine = validateLineSelector(op.line, lines.length, index);
     const matches = selectOccurrences(occurrences, (o) => o.startLine <= targetLine && o.endLine >= targetLine);
     if (matches.length === 0) {
-      throw new Error(
-        `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0` +
-          formatOccurrenceLines(all, lines),
+      throwEditError(
+        {
+          error_code: "TARGET_NOT_FOUND",
+          message: `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0`,
+          op_index: index,
+          at_line: op.line,
+          expected: op.target,
+          candidates: occurrenceCandidates(all, lines),
+        },
+        [formatOccurrenceLines(all, lines).replace(/^\n/, "")],
       );
     }
     if (matches.length > 1) {
-      throw new Error(
-        `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found ${matches.length}` +
-          formatOccurrenceLines(matches, lines),
+      throwEditError(
+        {
+          error_code: "TARGET_AMBIGUOUS",
+          message: `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found ${matches.length}`,
+          op_index: index,
+          at_line: op.line,
+          expected: op.target,
+          candidates: occurrenceCandidates(matches, lines),
+          details: { found: matches.length },
+        },
+        [formatOccurrenceLines(matches, lines).replace(/^\n/, "")],
       );
     }
     return [matches[0]!];
@@ -269,16 +347,37 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
   // Helper to validate range bounds and return selected occurrences.
   function selectRange(range: { startLine: number; endLine: number }): Occurrence[] {
     if (!Number.isInteger(range.startLine) || range.startLine < 1) {
-      throw new Error(`op[${index}] range.startLine must be a 1-indexed line number`);
+      throwEditError({
+        error_code: "VALIDATION",
+        message: `op[${index}] range.startLine must be a 1-indexed line number`,
+        op_index: index,
+      });
     }
     if (!Number.isInteger(range.endLine) || range.endLine < 1) {
-      throw new Error(`op[${index}] range.endLine must be a 1-indexed line number`);
+      throwEditError({
+        error_code: "VALIDATION",
+        message: `op[${index}] range.endLine must be a 1-indexed line number`,
+        op_index: index,
+      });
     }
     if (range.endLine < range.startLine) {
-      throw new Error(`op[${index}] invalid range: lines ${range.startLine}-${range.endLine} (endLine < startLine)`);
+      throwEditError({
+        error_code: "INVALID_RANGE",
+        message: `op[${index}] invalid range: lines ${range.startLine}-${range.endLine} (endLine < startLine)`,
+        op_index: index,
+        at_line: range.startLine,
+        end_line: range.endLine,
+      });
     }
     if (range.startLine > lines.length || range.endLine > lines.length) {
-      throw new Error(`op[${index}] range ${range.startLine}-${range.endLine} is out of bounds for file with ${lines.length} line(s)`);
+      throwEditError({
+        error_code: "RANGE_OUT_OF_BOUNDS",
+        message: `op[${index}] range ${range.startLine}-${range.endLine} is out of bounds for file with ${lines.length} line(s)`,
+        op_index: index,
+        at_line: range.startLine,
+        end_line: range.endLine,
+        details: { line_count: lines.length },
+      });
     }
     const rangeStart = range.startLine - 1;
     const rangeEnd = range.endLine - 1;
@@ -290,15 +389,30 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
     const targetLine = validateLineSelector(op.line, lines.length, index);
     const matches = selectOccurrences(occurrences, (o) => o.startLine <= targetLine && o.endLine >= targetLine);
     if (matches.length === 0) {
-      throw new Error(
-        `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0` +
-          formatOccurrenceLines(all, lines),
+      throwEditError(
+        {
+          error_code: "TARGET_NOT_FOUND",
+          message: `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0`,
+          op_index: index,
+          ...(op.line !== undefined ? { at_line: op.line } : {}),
+          expected: op.target,
+          candidates: occurrenceCandidates(all, lines),
+        },
+        [formatOccurrenceLines(all, lines).replace(/^\n/, "")],
       );
     }
     if (matches.length > 1) {
-      throw new Error(
-        `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found ${matches.length}` +
-          formatOccurrenceLines(matches, lines),
+      throwEditError(
+        {
+          error_code: "TARGET_AMBIGUOUS",
+          message: `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found ${matches.length}`,
+          op_index: index,
+          ...(op.line !== undefined ? { at_line: op.line } : {}),
+          expected: op.target,
+          candidates: occurrenceCandidates(matches, lines),
+          details: { found: matches.length },
+        },
+        [formatOccurrenceLines(matches, lines).replace(/^\n/, "")],
       );
     }
     return [matches[0]!];
@@ -309,9 +423,17 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
     const range = op.range!;
     const matches = selectRange(range);
     if (matches.length === 0) {
-      throw new Error(
-        `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0` +
-          formatOccurrenceLines(all, lines),
+      throwEditError(
+        {
+          error_code: "TARGET_NOT_FOUND",
+          message: `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0`,
+          op_index: index,
+          at_line: range.startLine,
+          end_line: range.endLine,
+          expected: op.target,
+          candidates: occurrenceCandidates(all, lines),
+        },
+        [formatOccurrenceLines(all, lines).replace(/^\n/, "")],
       );
     }
     return matches;
@@ -324,17 +446,34 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
     const targetLine = validateLineSelector(op.line, lines.length, index);
     const rangeMatches = selectRange(range);
     if (rangeMatches.length === 0) {
-      throw new Error(
-        `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0` +
-          formatOccurrenceLines(all, lines),
+      throwEditError(
+        {
+          error_code: "TARGET_NOT_FOUND",
+          message: `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0`,
+          op_index: index,
+          at_line: range.startLine,
+          end_line: range.endLine,
+          expected: op.target,
+          candidates: occurrenceCandidates(all, lines),
+        },
+        [formatOccurrenceLines(all, lines).replace(/^\n/, "")],
       );
     }
     const intersecting = rangeMatches.filter((o) => o.startLine <= targetLine && o.endLine >= targetLine);
     if (intersecting.length === 0) {
-      throw new Error(
-        `op[${index}] range ${range.startLine}-${range.endLine} selected ${rangeMatches.length} occurrence(s) of ${JSON.stringify(
-          op.target,
-        )} but none intersect line ${op.line}` + formatOccurrenceLines(rangeMatches, lines),
+      throwEditError(
+        {
+          error_code: "TARGET_AMBIGUOUS",
+          message: `op[${index}] range ${range.startLine}-${range.endLine} selected ${rangeMatches.length} occurrence(s) of ${JSON.stringify(
+            op.target,
+          )} but none intersect line ${op.line}`,
+          op_index: index,
+          ...(op.line !== undefined ? { at_line: op.line } : {}),
+          end_line: range.endLine,
+          expected: op.target,
+          candidates: occurrenceCandidates(rangeMatches, lines),
+        },
+        [formatOccurrenceLines(rangeMatches, lines).replace(/^\n/, "")],
       );
     }
     return rangeMatches;
@@ -342,12 +481,20 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
 
   // neither line nor range: target must be unique in the file.
   if (all.length === 0) {
-    throw new Error(targetNotFoundMessage(index, op.target, lines, text));
+    throwTargetNotFound(index, op.target, lines, text);
   }
   if (all.length > 1) {
-    throw new Error(
-      `op[${index}] target ${JSON.stringify(op.target)} occurs ${all.length} times in the file; provide line or range to select one` +
-        formatOccurrenceLines(all, lines),
+    throwEditError(
+      {
+        error_code: "TARGET_AMBIGUOUS",
+        message: `op[${index}] target ${JSON.stringify(op.target)} occurs ${all.length} times in the file; provide line or range to select one`,
+        op_index: index,
+        expected: op.target,
+        candidates: occurrenceCandidates(all, lines),
+        details: { found: all.length },
+        suggested: { line: all[0]!.startLine + 1 },
+      },
+      [formatOccurrenceLines(all, lines).replace(/^\n/, "")],
     );
   }
   return [all[0]!];
@@ -420,22 +567,50 @@ function rebasePriorDiffs(diffs: EditDiff[], shiftStartLine: number, delta: numb
   }
 }
 
-function unknownTypeError(op: TargetEditOp, index: number): Error {
-  return new Error(`op[${index}] unknown type: ${JSON.stringify((op as { type?: unknown }).type)}`);
+function unknownTypeError(op: TargetEditOp, index: number): never {
+  throwEditError({
+    error_code: "VALIDATION",
+    message: `op[${index}] unknown type: ${JSON.stringify((op as { type?: unknown }).type)}`,
+    op_index: index,
+  });
 }
 
 function validatePayload(op: TargetEditOp, index: number): void {
   if (op.type !== "replace" && op.type !== "delete" && op.type !== "insert_before" && op.type !== "insert_after") {
-    throw unknownTypeError(op, index);
+    unknownTypeError(op, index);
   }
   if (op.type === "replace") {
-    if (op.replacement.includes("\r")) throw new Error(`op[${index}] replacement must use \\n line endings, not \\r`);
-    if (op.replacement === op.target) throw new Error(`op[${index}] replacement must differ from target`);
+    if (op.replacement.includes("\r")) {
+      throwEditError({
+        error_code: "VALIDATION",
+        message: `op[${index}] replacement must use \\n line endings, not \\r`,
+        op_index: index,
+      });
+    }
+    if (op.replacement === op.target) {
+      throwEditError({
+        error_code: "VALIDATION",
+        message: `op[${index}] replacement must differ from target`,
+        op_index: index,
+      });
+    }
   }
   if (op.type === "insert_before" || op.type === "insert_after") {
-    if (op.lines.length === 0) throw new Error(`op[${index}] lines must contain at least one line`);
+    if (op.lines.length === 0) {
+      throwEditError({
+        error_code: "VALIDATION",
+        message: `op[${index}] lines must contain at least one line`,
+        op_index: index,
+      });
+    }
     for (const [lineIndex, line] of op.lines.entries()) {
-      if (line.includes("\n") || line.includes("\r")) throw new Error(`op[${index}] lines[${lineIndex}] must not contain line endings`);
+      if (line.includes("\n") || line.includes("\r")) {
+        throwEditError({
+          error_code: "VALIDATION",
+          message: `op[${index}] lines[${lineIndex}] must not contain line endings`,
+          op_index: index,
+        });
+      }
     }
   }
 }
@@ -457,7 +632,9 @@ export async function applyTargetEdits(
   absolutePath: string,
   ops: TargetEditOp[],
 ): Promise<string> {
-  if (ops.length === 0) throw new Error("ops must contain at least one target edit");
+  if (ops.length === 0) {
+    throwEditError({ error_code: "EMPTY_BATCH", message: "ops must contain at least one target edit" });
+  }
 
   const content = await fs.readFile(absolutePath, "utf8");
   const source = splitBom(content);

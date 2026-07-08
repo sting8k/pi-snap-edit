@@ -7,6 +7,9 @@ import snapEditExtension, {
   applyQuickEdits,
   applySubstituteEdits,
   applyTargetEdits,
+  parseSnapEditError,
+  SnapEditError,
+  SNAP_EDIT_ERROR_MARKER,
   splitLines,
   numberReadText,
   summarizeQuickEditOutput,
@@ -915,4 +918,276 @@ describe("target edits", () => {
     assert.equal(await readFile(file, "utf8"), "function foo() {\n    bar();\n    baz();\n}\n");
   });
 
+});
+
+describe("structured failures", () => {
+  it("embeds parseable snap-edit-error JSON on expectedStartLine mismatch", async () => {
+    const file = await tempFile("sample.txt", "one\ninserted\ntwo\n");
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["TWO"] }]),
+      (error: unknown) => {
+        assert.ok(error instanceof SnapEditError);
+        assert.match(error.message, new RegExp(SNAP_EDIT_ERROR_MARKER));
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_START_LINE_MISMATCH");
+        assert.equal(failure.edit_index, 0);
+        assert.equal(failure.at_line, 2);
+        assert.equal(failure.actual, "inserted");
+        assert.equal(failure.expected, "two");
+        assert.deepEqual(failure.candidates, [{ line: 3, text: "two" }]);
+        assert.deepEqual(failure.suggested, { start: 3, expectedStartLine: "two" });
+        return true;
+      },
+    );
+    assert.equal(await readFile(file, "utf8"), "one\ninserted\ntwo\n");
+  });
+
+  it("suggests indent_tolerant when exact guard fails but trim matches", async () => {
+    const file = await tempFile("sample.txt", "  value = false\n");
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "value = false", lines: ["value = true"] }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_START_LINE_MISMATCH");
+        assert.deepEqual(failure.suggested, { whitespace: "indent_tolerant" });
+        assert.equal(failure.at_line, 1);
+        return true;
+      },
+    );
+  });
+
+  it("structures overlapping range failures", async () => {
+    const original = ["a", "b", "c", "d"];
+    const file = await tempFile("sample.txt", original.join("\n"));
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [editFor(original, 1, 3, ["x"]), editFor(original, 3, 4, ["y"])]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "OVERLAPPING_RANGES");
+        assert.deepEqual(failure.details, {
+          ranges: [
+            { start: 1, end: 3 },
+            { start: 3, end: 4 },
+          ],
+        });
+        return true;
+      },
+    );
+  });
+
+  it("structures target_edit not-found failures with candidates", async () => {
+    const file = await tempFile("sample.txt", "const enabled = false;\n");
+
+    await assert.rejects(
+      () => applyTargetEdits(file, [{ type: "replace", target: "const enabled = fasle;", replacement: "const enabled = true;" }]),
+      (error: unknown) => {
+        assert.ok(error instanceof SnapEditError);
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "TARGET_NOT_FOUND");
+        assert.equal(failure.op_index, 0);
+        assert.equal(failure.expected, "const enabled = fasle;");
+        assert.ok(failure.candidates && failure.candidates.length >= 1);
+        assert.equal(failure.candidates[0]!.line, 1);
+        assert.match(failure.candidates[0]!.text, /const enabled = false;/);
+        return true;
+      },
+    );
+  });
+
+  it("structures ambiguous unique-target failures", async () => {
+    const file = await tempFile("sample.txt", "dup\ndup\n");
+
+    await assert.rejects(
+      () => applyTargetEdits(file, [{ type: "replace", target: "dup", replacement: "DUP" }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "TARGET_AMBIGUOUS");
+        assert.equal(failure.details?.found, 2);
+        assert.ok(failure.candidates && failure.candidates.length === 2);
+        assert.deepEqual(failure.suggested, { line: 1 });
+        return true;
+      },
+    );
+  });
+
+  it("parseSnapEditError reads marker from plain error messages", () => {
+    const message = `edit[0] boom\n${SNAP_EDIT_ERROR_MARKER}\n${JSON.stringify({
+      error_code: "VALIDATION",
+      message: "edit[0] boom",
+    })}`;
+    assert.deepEqual(parseSnapEditError(message), {
+      error_code: "VALIDATION",
+      message: "edit[0] boom",
+    });
+  });
+});
+
+describe("quick_edit eof and range guards", () => {
+  it("appends with start=\"eof\" without expectedStartLine", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\n");
+    await applyQuickEdits(file, [{ start: "eof", lines: ["three"] }]);
+    assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
+  });
+
+  it("appends with start=\"eof\" on empty file", async () => {
+    const file = await tempFile("sample.txt", "");
+    await applyQuickEdits(file, [{ start: "eof", lines: ["first"] }]);
+    assert.equal(await readFile(file, "utf8"), "first");
+  });
+
+  it("rejects start=\"eof\" with end set", async () => {
+    const file = await tempFile("sample.txt", "one\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: "eof", end: 1, lines: ["x"] }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "INVALID_RANGE");
+        return true;
+      },
+    );
+  });
+
+  it("rejects start=\"eof\" with empty lines", async () => {
+    const file = await tempFile("sample.txt", "one\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: "eof", lines: [] }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "VALIDATION");
+        return true;
+      },
+    );
+  });
+
+  it("keeps legacy start=lineCount+1 EOF insert", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\n");
+    await applyQuickEdits(file, [{ start: 3, expectedStartLine: "", lines: ["three"] }]);
+    assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
+  });
+
+  it("accepts whitespace=indent_tolerant as trim+preserveIndent", async () => {
+    const file = await tempFile("sample.txt", "function run() {\n\tif (enabled) {\n\t\toldCall();\n\t}\n}\n");
+
+    await applyQuickEdits(file, [
+      {
+        start: 2,
+        end: 4,
+        expectedStartLine: "if (enabled) {",
+        whitespace: "indent_tolerant",
+        lines: ["if (ready) {", "  newCall();", "}"],
+      },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n\tif (ready) {\n\t  newCall();\n\t}\n}\n");
+  });
+
+  it("lets explicit expectedStartLineMatch override whitespace shortcut", async () => {
+    const file = await tempFile("sample.txt", "  value = false\n");
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{
+        start: 1,
+        expectedStartLine: "value = false",
+        whitespace: "indent_tolerant",
+        expectedStartLineMatch: "exact",
+        lines: ["value = true"],
+      }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_START_LINE_MISMATCH");
+        return true;
+      },
+    );
+    assert.equal(await readFile(file, "utf8"), "  value = false\n");
+  });
+
+  it("accepts expectedEndLine and expectedLineCount guards", async () => {
+    const file = await tempFile("sample.txt", "function foo() {\n  return 1;\n}\nconst x = 1;\n");
+
+    await applyQuickEdits(file, [{
+      start: 1,
+      end: 3,
+      expectedStartLine: "function foo() {",
+      expectedEndLine: "}",
+      expectedLineCount: 3,
+      lines: ["function foo() {", "  return 2;", "}"],
+    }]);
+
+    assert.equal(await readFile(file, "utf8"), "function foo() {\n  return 2;\n}\nconst x = 1;\n");
+  });
+
+  it("rejects expectedEndLine mismatch with structured failure", async () => {
+    const file = await tempFile("sample.txt", "function foo() {\n  return 1;\n}\n");
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{
+        start: 1,
+        end: 3,
+        expectedStartLine: "function foo() {",
+        expectedEndLine: "};",
+        lines: ["function foo() {", "  return 2;", "}"],
+      }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_END_LINE_MISMATCH");
+        assert.equal(failure.end_line, 3);
+        assert.equal(failure.actual, "}");
+        assert.equal(failure.expected, "};");
+        return true;
+      },
+    );
+    assert.equal(await readFile(file, "utf8"), "function foo() {\n  return 1;\n}\n");
+  });
+
+  it("rejects expectedLineCount mismatch with structured failure", async () => {
+    const file = await tempFile("sample.txt", "a\nb\nc\n");
+
+    await assert.rejects(
+      () => applyQuickEdits(file, [{
+        start: 1,
+        end: 2,
+        expectedStartLine: "a",
+        expectedLineCount: 3,
+        lines: ["A", "B"],
+      }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_LINE_COUNT_MISMATCH");
+        assert.deepEqual(failure.details, {
+          expected_line_count: 3,
+          actual_line_count: 2,
+        });
+        assert.deepEqual(failure.suggested, { expectedLineCount: 2 });
+        return true;
+      },
+    );
+    assert.equal(await readFile(file, "utf8"), "a\nb\nc\n");
+  });
+
+  it("requires expectedStartLine for non-eof line edits", async () => {
+    const file = await tempFile("sample.txt", "one\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, lines: ["ONE"] }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "VALIDATION");
+        assert.deepEqual(failure.suggested, { expectedStartLine: "one" });
+        return true;
+      },
+    );
+  });
 });
