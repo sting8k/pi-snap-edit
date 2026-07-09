@@ -1,3 +1,33 @@
+## pi-snap-edit v4.2.1
+
+Patch release. Makes edit failures machine-readable via structured error payloads, and improves `quick_edit` usability with `start="eof"` appends, an `indent_tolerant` whitespace shortcut, and optional end-line/count guards — all without weakening fail-closed atomic semantics.
+
+### Changes
+
+- **Structured failures:** new `SnapEditError` with stable `error_code`, optional `candidates` / `suggested` retry fields, and a trailing `--- snap-edit-error ---` JSON block. Exports `parseSnapEditError` / `SnapEditError` for engines, tools, and tests. `quick_edit` and `target_edit` validation/mismatch paths now route through `throwEditError`, keeping human diagnostic prose above the JSON.
+- **`quick_edit` UX:**
+  - Prefer `start="eof"` for appends (no `expectedStartLine` required); legacy `start=lineCount+1` inserts still work.
+  - New `whitespace="indent_tolerant"` shortcut (trim guards + `preserveIndent`); explicit `expectedStartLineMatch` / `preserveIndent` still override.
+  - Optional `expectedEndLine` and `expectedLineCount` guards for safer multi-line range edits.
+  - Actionable `suggested` retry fields surfaced on errors (relocated start, `indent_tolerant`).
+- **Tool guidance:** documented `eof`, whitespace shortcut, range guards, and structured error parsing in `quick_edit` / `target_edit` promptGuidelines.
+- **Tests:** added coverage for structured parse paths, `eof` append, `indent_tolerant`, end/count guards, and target ambiguous/not-found structured payloads.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (93 tests).
+- `git diff --check` passed.
+- `npm pack --dry-run` passed.
+
+---
+
 ## pi-snap-edit v4.2.0
 
 Minor release. Adds `matchMode=trim` for whitespace-tolerant target matching, relaxes `line`/`range` selector rules for `replace`/`delete`, and surfaces multi-line diagnostic hints when a multi-line target fails to match.
