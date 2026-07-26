@@ -4,26 +4,30 @@ export const FileStatParams = Type.Object({
   path: Type.String({ description: "Path to stat before line-based quick_edit." }),
 });
 
+const LineEditParams = Type.Object({
+  start: Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF (legacy; prefer start=\"eof\")." }),
+  end: Type.Optional(Type.Integer({ minimum: 1, description: "Optional 1-indexed inclusive end line number." })),
+  expectedStartLine: Type.Optional(Type.String({ description: "Guard for the current start line (required except for an empty-file insert). Exact by default; use whitespace=\"indent_tolerant\" or expectedStartLineMatch=trim for whitespace-tolerant guards. JSON-style escape sequences (e.g. \\n, \\t) are unescaped before comparing." })),
+  expectedStartLineMatch: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], { description: "How to compare expectedStartLine/expectedEndLine. Defaults to exact unless whitespace is indent_tolerant (then trim). trim ignores leading/trailing whitespace." })),
+  expectedEndLine: Type.Optional(Type.String({ description: "Optional guard for the current end line content. Uses the same match mode as expectedStartLine. Recommended for multi-line range edits." })),
+  expectedLineCount: Type.Optional(Type.Integer({ minimum: 1, description: "Optional guard: expected number of lines in the start..end range (end-start+1). Rejects if the span size differs." })),
+  whitespace: Type.Optional(Type.Union([Type.Literal("strict"), Type.Literal("indent_tolerant")], {
+    description: "Whitespace policy. strict (default): exact guards, no indent rewrite. indent_tolerant: trim guards + preserveIndent for replacement lines. Explicit expectedStartLineMatch/preserveIndent override the matching parts of this shortcut.",
+  })),
+  preserveIndent: Type.Optional(Type.Boolean({ description: "When true, prefixes the current start line indentation to each non-empty replacement line. Use unindented replacement lines. Defaults true when whitespace is indent_tolerant." })),
+  lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it." }),
+}, { description: "Replace, insert, or delete by line number or inclusive line range." });
+
+const EofEditParams = Type.Object({
+  start: Type.Literal("eof", { description: "Append at end of file." }),
+  lines: Type.Array(Type.String(), { minItems: 1, description: "Lines to append. Must contain at least one line." }),
+}, { description: "Append-only EOF form. Send exactly start and lines; do not send end or guard fields." });
+
 export const QuickEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
   edits: Type.Array(
-    Type.Object({
-      start: Type.Union([
-        Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF (legacy; prefer start=\"eof\")." }),
-        Type.Literal("eof", { description: "Insert lines at end of file. Prefer this over start=lineCount+1. expectedStartLine is optional for eof." }),
-      ], { description: "1-indexed start line, or \"eof\" to append at end of file." }),
-      end: Type.Optional(Type.Integer({ minimum: 1, description: "Optional 1-indexed inclusive end line number. Not used with start=\"eof\"." })),
-      expectedStartLine: Type.Optional(Type.String({ description: "Guard for the current start line (required except for start=\"eof\" or empty-file insert). Exact by default; use whitespace=\"indent_tolerant\" or expectedStartLineMatch=trim for whitespace-tolerant guards. JSON-style escape sequences (e.g. \\n, \\t) are unescaped before comparing." })),
-      expectedStartLineMatch: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], { description: "How to compare expectedStartLine/expectedEndLine. Defaults to exact unless whitespace is indent_tolerant (then trim). trim ignores leading/trailing whitespace." })),
-      expectedEndLine: Type.Optional(Type.String({ description: "Optional guard for the current end line content. Uses the same match mode as expectedStartLine. Recommended for multi-line range edits." })),
-      expectedLineCount: Type.Optional(Type.Integer({ minimum: 1, description: "Optional guard: expected number of lines in the start..end range (end-start+1). Rejects if the span size differs." })),
-      whitespace: Type.Optional(Type.Union([Type.Literal("strict"), Type.Literal("indent_tolerant")], {
-        description: "Whitespace policy. strict (default): exact guards, no indent rewrite. indent_tolerant: trim guards + preserveIndent for replacement lines. Explicit expectedStartLineMatch/preserveIndent override the matching parts of this shortcut.",
-      })),
-      preserveIndent: Type.Optional(Type.Boolean({ description: "When true, prefixes the current start line indentation to each non-empty replacement line. Use unindented replacement lines. Defaults true when whitespace is indent_tolerant." })),
-      lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it. For start=\"eof\", must be non-empty." }),
-    }),
-    { minItems: 1, description: "Line-number edits to apply atomically. Use start=\"eof\" (preferred) or start=lineCount+1 to insert at EOF." },
+    Type.Union([EofEditParams, LineEditParams]),
+    { minItems: 1, description: 'Line-number edits or EOF appends to apply atomically. For EOF, use exactly { start: "eof", lines: [...] }.' },
   ),
 });
 

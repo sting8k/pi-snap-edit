@@ -49,7 +49,8 @@ export default function (pi: ExtensionAPI) {
       "Edit a file by 1-indexed line number or inclusive line range. Requires expectedStartLine for each edit (except start=\"eof\") to guard against stale line content. Atomic: any invalid edit rejects the whole batch. Failures include a machine-readable --- snap-edit-error --- JSON block with error_code and optional suggested retry fields.",
     promptSnippet: "Edit files by line number with expectedStartLine guard",
     promptGuidelines: [
-      "Use start/end as 1-indexed line numbers from read, rg -n, grep -n, or srcwalk output. Prefer start=\"eof\" to append at end of file.",
+      "Use start/end as 1-indexed line numbers from the current file snapshot. Prefer start=\"eof\" to append at end of file.",
+      'For an EOF append, send exactly { start: "eof", lines: [...] }. Never include end, expectedStartLine, or other guard fields.',
       "Always provide expectedStartLine with the current content of the start line (not required for start=\"eof\").",
       "Default guard matching is exact. When indentation is uncertain, set whitespace=\"indent_tolerant\" (trim guards + preserveIndent) or expectedStartLineMatch=\"trim\".",
       "For multi-line ranges, prefer expectedEndLine and/or expectedLineCount guards in addition to expectedStartLine.",
