@@ -16,6 +16,7 @@ import snapEditExtension, {
   preferQuickEditTools,
   type Edit,
 } from "../src/index.js";
+import { QuickEditParams } from "../src/schemas.js";
 
 const tempDirs: string[] = [];
 
@@ -1027,6 +1028,21 @@ describe("structured failures", () => {
       error_code: "VALIDATION",
       message: "edit[0] boom",
     });
+  });
+});
+
+describe("quick_edit schema", () => {
+  it("exposes EOF append as a distinct edit shape without range guards", () => {
+    const items = QuickEditParams.properties.edits.items as unknown as {
+      anyOf: Array<{ properties: { start: { const?: unknown }; lines: { minItems?: number } }; required?: string[] }>;
+    };
+    assert.equal(items.anyOf.length, 2);
+
+    const eofShape = items.anyOf.find((shape) => shape.properties.start.const === "eof");
+    assert.ok(eofShape);
+    assert.deepEqual(Object.keys(eofShape.properties), ["start", "lines"]);
+    assert.deepEqual(eofShape.required, ["start", "lines"]);
+    assert.equal(eofShape.properties.lines.minItems, 1);
   });
 });
 
