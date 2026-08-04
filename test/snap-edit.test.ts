@@ -835,6 +835,111 @@ describe("target edits", () => {
     assert.equal(await readFile(file, "utf8"), "function foo() {\n    bar();\n    baz();\n}\n");
   });
 
+  it("reports no tier note for an exact raw match", async () => {
+    const file = await tempFile("sample.txt", "alpha\nbeta\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "alpha", line: 1, replacement: "ALPHA" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "ALPHA\nbeta\n");
+    assert.doesNotMatch(result, /matched via/);
+  });
+
+  it("reports a trim tier note when indentation differs", async () => {
+    const file = await tempFile("sample.ts", "function foo() {\n    bar();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "bar();", line: 2, matchMode: "trim", replacement: "baz();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function foo() {\n    baz();\n}\n");
+    assert.match(result, /matched via trim \(indentation or trailing whitespace differed\)/);
+  });
+
+  it("reports an unescape tier note for escaped-newline fallback matches", async () => {
+    const file = await tempFile("sample.ts", "before\nif (debug) {\n  log();\n}\nafter\n");
+    const result = await applyTargetEdits(file, [
+      { type: "delete", target: "if (debug) {\\n  log();\\n}\\n", line: 2 },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "before\nafter\n");
+    assert.match(result, /matched via unescape \(escape sequences in target were normalized\)/);
+  });
+
+  it("prefixes tier notes with op index for multi-op batches", async () => {
+    const file = await tempFile("sample.ts", "function foo() {\n    bar();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "foo()", line: 1, replacement: "baz()" },
+      { type: "replace", target: "bar();", line: 2, matchMode: "trim", replacement: "qux();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function baz() {\n    qux();\n}\n");
+    assert.match(result, /op\[1\] matched via trim \(indentation or trailing whitespace differed\)/);
+    assert.doesNotMatch(result, /op\[0\] matched/);
+  });
+
+  it("keeps an exact hit authoritative over a trim occurrence elsewhere", async () => {
+    // Regression: auto-cascade must only fall to trim when neither the raw
+    // target nor its unescaped form matches. A unique exact match must not be
+    // diluted by a trim occurrence on a different line, which would turn the
+    // no-line/range path into an ambiguous reject.
+    const file = await tempFile("sample.txt", "if (a) {\n  foo();\n}\nwhile (b) {\n\tfoo();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "  foo();", replacement: "  bar();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "if (a) {\n  bar();\n}\nwhile (b) {\n\tfoo();\n}\n");
+    assert.doesNotMatch(result, /matched via/);
+  });
+
+  it("auto-trim replace does not double the replacement indentation", async () => {
+    // Regression: auto-cascade can produce a trimmed occurrence with no explicit
+    // matchMode. The replacement must still be edge-trimmed to avoid doubling
+    // the file's original indentation.
+    const file = await tempFile("sample.ts", "function a() {\n\tconst x = 1;\n}\n");
+    await applyTargetEdits(file, [
+      { type: "replace", target: "    const x = 1;", replacement: "    const x = 2;" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function a() {\n\tconst x = 2;\n}\n");
+  });
+
+  it("auto-trim replace matches explicit matchMode:trim output", async () => {
+    // Invariant: the same trimmed occurrence must produce identical file content
+    // whether it came from auto-cascade or explicit matchMode:"trim".
+    const auto = await tempFile("sample.ts", "function a() {\n\tconst x = 1;\n}\n");
+    const explicit = await tempFile("sample.ts", "function a() {\n\tconst x = 1;\n}\n");
+
+    await applyTargetEdits(auto, [
+      { type: "replace", target: "    const x = 1;", replacement: "    const x = 2;" },
+    ]);
+    await applyTargetEdits(explicit, [
+      { type: "replace", target: "    const x = 1;", matchMode: "trim", replacement: "    const x = 2;" },
+    ]);
+
+    assert.equal(await readFile(auto, "utf8"), await readFile(explicit, "utf8"));
+    assert.equal(await readFile(auto, "utf8"), "function a() {\n\tconst x = 2;\n}\n");
+  });
+
+  it("auto-trim multi-line block replace matches explicit matchMode:trim per line", async () => {
+    // The trimmed occurrence is bounded to the file's trimmed content, so the
+    // first line keeps the file's indentation while the replacement's internal
+    // and last-line indentation is used as-is. Auto-trim must agree with explicit
+    // matchMode:"trim" line-for-line.
+    const setup = "function a() {\n\tif (x) {\n\t\tconst y = 1;\n\t\tlog(y);\n\t}\n}\n";
+    const block = "  if (x) {\n    const y = 1;\n    log(y);\n  }";
+    const replacement = "  if (x) {\n    const y = 2;\n    log(y);\n  }";
+    const expected = "function a() {\n\tif (x) {\n    const y = 2;\n    log(y);\n  }\n}\n";
+
+    const auto = await tempFile("sample.ts", setup);
+    await applyTargetEdits(auto, [{ type: "replace", target: block, replacement }]);
+
+    const explicit = await tempFile("sample.ts", setup);
+    await applyTargetEdits(explicit, [{ type: "replace", target: block, matchMode: "trim", replacement }]);
+
+    assert.equal(await readFile(auto, "utf8"), expected);
+    assert.equal(await readFile(auto, "utf8"), await readFile(explicit, "utf8"));
+  });
+
 });
 
 describe("structured failures", () => {

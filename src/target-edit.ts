@@ -159,7 +159,16 @@ function findTargetOccurrences(text: string, target: string, matchMode: "exact" 
   const raw = findNeedleOccurrences(text, target);
   const unescaped = unescapeLiteralSequences(target);
   const fallback = unescaped === target ? [] : findNeedleOccurrences(text, unescaped).map((o) => ({ ...o, kind: "fallback" as const }));
-  return { raw, fallback, trimmed: [] };
+  // Auto-cascade: only when neither the raw target nor its unescaped form
+  // matches do we compute whole-line trim matches, so indentation or
+  // trailing-whitespace drift still succeeds. Gating on the earlier tiers
+  // missing keeps an exact match authoritative: it must not be diluted by a
+  // trim occurrence elsewhere, which would turn a unique exact hit into an
+  // ambiguous reject in the no-line/range path (allOccurrences).
+  const trimmed = raw.length === 0 && fallback.length === 0
+    ? findTrimmedOccurrences(text, target)
+    : [];
+  return { raw, fallback, trimmed };
 }
 
 function overlaps(left: Occurrence, right: Occurrence): boolean {
@@ -182,6 +191,16 @@ function selectOccurrences(
   const fallbackMatches = occurrences.fallback.filter(selector);
   if (fallbackMatches.length > 0) return fallbackMatches;
   return occurrences.trimmed.filter(selector);
+}
+
+function matchTierNote(occurrences: Occurrence[]): string | undefined {
+  if (occurrences.some((occurrence) => occurrence.kind === "trimmed")) {
+    return "matched via trim (indentation or trailing whitespace differed)";
+  }
+  if (occurrences.some((occurrence) => occurrence.kind === "fallback")) {
+    return "matched via unescape (escape sequences in target were normalized)";
+  }
+  return undefined;
 }
 
 function targetCandidates(lines: string[], needle: string): EditFailureCandidate[] {
@@ -518,11 +537,16 @@ function trimReplacementEdges(replacement: string): string {
   return lines.join("\n");
 }
 
-function replaceRanges(text: string, occurrences: Occurrence[], replacement: string, matchMode?: "exact" | "trim"): string {
-  // In trim mode, the file's surrounding whitespace is preserved by the
-  // occurrence boundary, so the replacement should be treated as trimmed
-  // content. Exact mode keeps the replacement literal.
-  const effectiveReplacement = matchMode === "trim" ? trimReplacementEdges(replacement) : replacement;
+function replaceRanges(text: string, occurrences: Occurrence[], replacement: string): string {
+  // Gate the replacement semantics on the actual occurrence kind rather than
+  // the op's matchMode. A trimmed occurrence (explicit matchMode:"trim", or
+  // auto-cascade when raw/unescaped both miss) is bounded to the trimmed file
+  // content, so the replacement must have its edges trimmed or the file's
+  // original indentation would be doubled. Raw/fallback occurrences keep the
+  // replacement literal.
+  const effectiveReplacement = occurrences.some((occurrence) => occurrence.kind === "trimmed")
+    ? trimReplacementEdges(replacement)
+    : replacement;
   let updated = text;
   for (const occurrence of [...occurrences].reverse()) {
     updated = `${updated.slice(0, occurrence.start)}${effectiveReplacement}${updated.slice(occurrence.end)}`;
@@ -641,6 +665,8 @@ export async function applyTargetEdits(
   const lineEnding = detectLineEnding(source.text);
   let state: LineState = { lines: splitLines(source.text), trailingNewline: source.text.endsWith("\n") };
   const diffs: EditDiff[] = [];
+  const tierNotes: string[] = [];
+  const multiOp = ops.length > 1;
 
   for (const [index, op] of ops.entries()) {
     validatePayload(op, index);
@@ -648,6 +674,8 @@ export async function applyTargetEdits(
     const text = toNormalized(state);
     const offsets = lineStartOffsets(state.lines);
     const occurrences = selectedOccurrences(op, text, state.lines, offsets, index);
+    const tierNote = matchTierNote(occurrences);
+    if (tierNote) tierNotes.push(multiOp ? `op[${index}] ${tierNote}` : tierNote);
 
     switch (op.type) {
       case "insert_before":
@@ -655,7 +683,7 @@ export async function applyTargetEdits(
         state = applyInsert(state, occurrences, op);
         break;
       case "replace":
-        state = fromNormalized(replaceRanges(text, occurrences, op.replacement, op.matchMode));
+        state = fromNormalized(replaceRanges(text, occurrences, op.replacement));
         break;
       case "delete":
         state = fromNormalized(replaceRanges(text, occurrences, ""));
@@ -682,5 +710,6 @@ export async function applyTargetEdits(
   });
   const contexts = formatContexts(state.lines, contextRanges);
   if (contexts) parts.push(contexts);
+  if (tierNotes.length > 0) parts.push(tierNotes.join("\n"));
   return parts.join("\n\n");
 }
