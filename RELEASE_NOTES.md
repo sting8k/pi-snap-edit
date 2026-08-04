@@ -6,7 +6,8 @@ Breaking release. `target_edit` now cascades through match tiers automatically i
 
 - **Automatic match cascade for `target_edit`:** matching now falls through exact substring → unescaped target → whole-line trim. The trim tier only runs when both earlier tiers miss, so a unique exact hit is never diluted into an ambiguous reject. Indentation or trailing-whitespace drift succeeds without a retry, saving a read/edit round-trip.
 - **Match tier reporting:** when a match is not exact, the tool output states how it matched (`matched via trim (indentation or trailing whitespace differed)` or `matched via unescape (escape sequences in target were normalized)`), prefixed with `op[N]` in multi-op batches. Exact matches stay silent. Relaxed matching is deliberately visible so a wrong-but-plausible match can be caught rather than applied quietly.
-- **Trim semantics gated on occurrence kind:** replacement edge trimming now keys off the resolved occurrence being a trim match rather than the caller's `matchMode`. Auto-cascade and explicit `matchMode: "trim"` produce byte-identical output for the same input; previously the auto path would double the indentation.
+- **Trim semantics gated on occurrence kind:** trim behavior now keys off the resolved occurrence being a trim match rather than the caller's `matchMode`. On `replace`, edge trimming keeps the file's original indentation; previously the auto path would double it. Auto-cascade and explicit `matchMode: "trim"` produce byte-identical output for the same input, unless the target also matches exactly — then auto-cascade correctly resolves to the exact hit while `matchMode: "trim"` ignores it by design.
+- **`delete` on a trim match removes the whole line:** previously it blanked the content and left an indentation-only line behind. Multi-line trim blocks remove all matched lines, and deleting the last line of a file without a trailing newline removes the preceding line terminator instead of leaving one dangling. `delete` on an exact or unescaped match keeps literal substring semantics.
 - **`matchMode` unchanged in meaning:** still accepted, still forces trim-only matching and ignores exact substring hits — useful when the target text also appears inside an indented line.
 - **Removed `substitute_edit`:** unregistered as a callable tool since v3.0.0; its engine, schema, and exports are now gone. The `substitute_edit` filter in active-tool preference is kept so saved state from older sessions is still cleaned up.
 - **Docs:** README, `target_edit` promptGuidelines, and the `matchMode` schema description updated to describe the cascade instead of instructing callers to opt into trim.
@@ -15,6 +16,7 @@ Breaking release. `target_edit` now cascades through match tiers automatically i
 
 - `applySubstituteEdits` and the `Substitution` type are no longer exported.
 - `target_edit` succeeds on some inputs that previously failed with `target not found`. Callers relying on strict exact-only matching should pass `matchMode: "exact"`-equivalent unique targets, or a `line`/`range` selector.
+- `target_edit` `delete` on a trim match now removes the whole line instead of blanking it. Callers that relied on the leftover indentation-only line must adjust.
 
 ### Install
 
@@ -25,10 +27,11 @@ pi install npm:pi-snap-edit
 ### Verification
 
 - `npm run typecheck` passed.
-- `npm test` passed (97 tests).
+- `npm test` passed (106 tests).
 - `git diff --check` passed.
 - `npm pack --dry-run` passed.
-- A/B verified against the previous commit: auto-cascade output is identical to explicit `matchMode: "trim"` across single-line, no-indent replacement, multi-line block, `delete`, and CRLF/no-trailing-newline cases; exact-path behavior (exact hit beside a trim occurrence elsewhere, literal replacement, unescape fallback, `line` selector, explicit trim) is unchanged; ambiguous trim matches still reject.
+- A/B verified against the previous release: exact-path behavior is unchanged across exact substring `delete`, `delete` with a `line` selector, unescape `delete`, exact multi-line block `delete`, trim `replace`, and trim `insert_after`; auto-cascade output matches explicit `matchMode: "trim"` on single-line, no-indent replacement, multi-line block, and CRLF/no-trailing-newline cases; ambiguous trim matches still reject; a failing later operation still rolls back a valid earlier trim edit.
+- Live-tested through the registered Pi `read`, `quick_edit`, and `target_edit` tools on `tmp/` fixtures, verifying exact bytes for tab indentation, CRLF, no-trailing-newline, and UTF-8 content.
 
 ---
 
