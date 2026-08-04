@@ -40,7 +40,6 @@ Tool behavior:
 - `quick_edit` performs atomic line/range replacements using 1-indexed line numbers; requires `expectedStartLine` for each edit.
 - `expectedStartLine` guards the current `start` line only; it does not verify the full range or detect line shifts from insertions/deletions above.
 - `quick_edit` defaults to exact guard matching. Use `expectedStartLineMatch: "trim"` plus `preserveIndent: true` when indentation/trailing whitespace is uncertain and replacement lines should inherit the current line indentation.
-- `substitute_edit` registration is currently disabled; its engine remains exported for now.
 - `target_edit` performs ordered exact-target operations: `replace`, `delete`, `insert_before`, and `insert_after`.
 - For `replace` and `delete`, selectors are flexible: omit both `line`/`range` when the target is unique in the file; use `line` for one occurrence on a line; use `range` for every occurrence fully inside an inclusive line range; or combine `line` + `range` to scope by range and verify one selected occurrence intersects the line.
 - `insert_before` and `insert_after` require `line` and insert full lines before/after the target occurrence.

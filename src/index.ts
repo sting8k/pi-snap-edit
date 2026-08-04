@@ -22,10 +22,9 @@ export {
 } from "./edit-error.js";
 export { getFileStatSnapshot } from "./file-stat.js";
 export { applyQuickEdits } from "./quick-edit.js";
-export type { Edit, Substitution, TargetEditOp } from "./schemas.js";
+export type { Edit, TargetEditOp } from "./schemas.js";
 export { summarizeQuickEditOutput } from "./render.js";
 export { splitLines } from "./text.js";
-export { applySubstituteEdits } from "./substitute-edit.js";
 export { numberReadText } from "./read-hook.js";
 export { applyTargetEdits } from "./target-edit.js";
 

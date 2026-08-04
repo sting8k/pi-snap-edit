@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import snapEditExtension, {
   applyQuickEdits,
-  applySubstituteEdits,
   applyTargetEdits,
   parseSnapEditError,
   SnapEditError,
@@ -88,7 +87,7 @@ describe("quick-edit renderer helpers", () => {
   it("handles context-only quick-edit output", () => {
     assert.deepEqual(summarizeQuickEditOutput("1| alpha"), { additions: 0, removals: 0, hasDiff: false });
   });
-  it("prefers quick_edit by removing disabled edit tools from active tools", () => {
+  it("prefers quick_edit and cleans legacy substitute_edit from saved active tools", () => {
     assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit", "target_edit"]);
     assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "substitute_edit", "edit"]), ["read", "quick_edit", "target_edit"]);
   });
@@ -329,89 +328,6 @@ describe("quick edits", () => {
       /end < start/,
     );
     assert.equal(await readFile(file, "utf8"), original.join("\n"));
-  });
-});
-
-describe("substitute edits", () => {
-  it("applies ordered substitutions inside a required line range", async () => {
-    const file = await tempFile(
-      "sample.ts",
-      [
-        "function one() {",
-        "  logger.debug(debugEnabled);",
-        "}",
-        "function two() {",
-        "  logger.debug(debugEnabled);",
-        "}",
-      ].join("\n") + "\n",
-    );
-
-    const result = await applySubstituteEdits(file, 4, 6, [
-      { old: "logger.debug", new: "logger.trace", count: 1 },
-      { old: "debugEnabled", new: "traceEnabled", count: 1 },
-    ]);
-
-    assert.match(result, /logger\.trace/);
-    assert.equal(
-      await readFile(file, "utf8"),
-      [
-        "function one() {",
-        "  logger.debug(debugEnabled);",
-        "}",
-        "function two() {",
-        "  logger.trace(traceEnabled);",
-        "}",
-      ].join("\n") + "\n",
-    );
-  });
-
-  it("rejects count mismatch atomically", async () => {
-    const original = "one\ntwo two\nthree\n";
-    const file = await tempFile("sample.txt", original);
-
-    await assert.rejects(
-      async () => applySubstituteEdits(file, 1, 3, []),
-      /substitutions must contain at least one replacement/,
-    );
-
-    await assert.rejects(
-      async () => applySubstituteEdits(file, 1, 3, [{ old: "two", new: "TWO", count: 1 }]),
-      /expected 1 occurrence\(s\).*found 2/,
-    );
-    assert.equal(await readFile(file, "utf8"), original);
-  });
-
-
-  it("rejects invalid ranges and multi-line substitutions", async () => {
-    const file = await tempFile("sample.txt", "one\ntwo\n");
-
-    await assert.rejects(
-      async () => applySubstituteEdits(file, 3, 3, [{ old: "x", new: "y", count: 1 }]),
-      /out of bounds/,
-    );
-    await assert.rejects(
-      async () => applySubstituteEdits(file, 1, 2, [{ old: "", new: "x", count: 1 }]),
-      /old must not be empty/,
-    );
-    await assert.rejects(
-      async () => applySubstituteEdits(file, 1, 2, [{ old: "one", new: "ONE\nTWO", count: 1 }]),
-      /single-line/,
-    );
-  });
-
-  it("preserves CRLF and no-trailing-newline files", async () => {
-    const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree");
-    await applySubstituteEdits(file, 2, 2, [{ old: "two", new: "TWO", count: 1 }]);
-
-    assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree");
-  });
-
-  it("preserves a single UTF-8 BOM during substitutions", async () => {
-    const file = await tempFile("sample.txt", "\uFEFFone\ntwo\n");
-
-    await applySubstituteEdits(file, 1, 1, [{ old: "one", new: "ONE", count: 1 }]);
-
-    await assertUtf8BomContent(file, "ONE\ntwo\n");
   });
 });
 

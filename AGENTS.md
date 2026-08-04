@@ -8,7 +8,6 @@ Core behavior:
 
 - Hook Pi `read` results and add padded line numbers.
 - Provide `quick_edit` for atomic line/range replacements guarded by `expectedStartLine`.
-- Keep `substitute_edit` engine/export for counted literal substitutions, but its Pi tool registration is temporarily disabled.
 - Provide `target_edit` for exact target text `replace`/`insert`/`delete` with occurrence/count guards.
 - Reject stale guards, invalid ranges, target misses, and failed batches without partial writes.
 - Preserve line endings, including CRLF and no-trailing-newline files.
@@ -17,7 +16,7 @@ The package is experimental. Keep changes small, explicit, and well-tested.
 
 ## Development rules
 
-- Keep callable tool names stable: `quick_edit` and `target_edit`. `substitute_edit` is temporarily not registered as a callable tool.
+- Keep callable tool names stable: `quick_edit` and `target_edit`.
 - Do not reintroduce the built-in `edit` tool preference; the extension should prefer `quick_edit` and `target_edit`.
 - Do not add config, slash commands, widgets, MCP, or external editor/script dependencies unless explicitly requested.
 - Avoid broad refactors. Touch only files needed for the task.
@@ -46,7 +45,6 @@ npm run typecheck && npm test && git diff --check
 - `src/diff.ts`: diff formatting and merged refreshed context output.
 - `src/schemas.ts`: TypeBox schemas and edit operation types.
 - `src/quick-edit.ts`: `quick_edit` engine.
-- `src/substitute-edit.ts`: `substitute_edit` engine.
 - `src/target-edit.ts`: `target_edit` engine.
 - `src/read-hook.ts`: `read` result line-numbering hook.
 - `src/render.ts`: TUI render helpers.
@@ -60,7 +58,6 @@ Cover these cases when changing edit behavior:
 - stale `expectedStartLine` rejection
 - atomic rollback on failure
 - overlapping/reversed/out-of-bounds ranges
-- counted substitutions and count mismatch
 - insert/delete/replace line operations through `quick_edit`
 - exact target replace/insert/delete operations through `target_edit`
 - CRLF and no-trailing-newline preservation
