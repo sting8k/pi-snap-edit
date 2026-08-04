@@ -554,6 +554,36 @@ function replaceRanges(text: string, occurrences: Occurrence[], replacement: str
   return updated;
 }
 
+function deleteRanges(text: string, occurrences: Occurrence[]): string {
+  // Delete and replace have different semantics for trimmed occurrences.
+  // Replace keeps the file's indentation by staying bounded to the trimmed
+  // content; delete removes a whole line, so leaving the trimmed content alone
+  // would orphan an indentation-only line. A trimmed occurrence therefore
+  // expands to the full line(s) and removes the line terminator. Raw/fallback
+  // occurrences keep literal substring semantics.
+  let updated = text;
+  for (const occurrence of [...occurrences].reverse()) {
+    let start = occurrence.start;
+    let end = occurrence.end;
+    if (occurrence.kind === "trimmed") {
+      start = text.lastIndexOf("\n", occurrence.start - 1) + 1;
+      const terminatingNewline = text.indexOf("\n", occurrence.end);
+      if (terminatingNewline !== -1) {
+        // Line(s) terminated by a newline: remove the whole line including its
+        // line ending and any trailing whitespace.
+        end = terminatingNewline + 1;
+      } else {
+        // Last line has no trailing newline: remove it together with the
+        // preceding line terminator so no dangling newline is left behind.
+        if (start > 0 && text[start - 1] === "\n") start -= 1;
+        end = text.length;
+      }
+    }
+    updated = `${updated.slice(0, start)}${updated.slice(end)}`;
+  }
+  return updated;
+}
+
 function diffLines(before: string[], after: string[]): EditDiff | undefined {
   let prefix = 0;
   while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix++;
@@ -686,7 +716,7 @@ export async function applyTargetEdits(
         state = fromNormalized(replaceRanges(text, occurrences, op.replacement));
         break;
       case "delete":
-        state = fromNormalized(replaceRanges(text, occurrences, ""));
+        state = fromNormalized(deleteRanges(text, occurrences));
         break;
       default:
         throw unknownTypeError(op, index);

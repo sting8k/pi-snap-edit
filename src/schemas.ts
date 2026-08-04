@@ -35,7 +35,7 @@ const TargetBase = {
   target: Type.String({ minLength: 1, description: "Exact literal target text to find. Use \\n for multi-line targets." }),
   matchMode: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], {
     default: "exact",
-    description: "Match mode. exact (default) tries exact substring matching, then the unescaped target, then falls back to whole-line trim matching only if both miss, so an exact hit is never diluted. trim forces trim-only matching and ignores exact substring hits, which helps when the target text also occurs inside an indented line. In either mode a trim match is bounded to the trimmed content so original indentation is preserved, and replacement leading/trailing whitespace is stripped before writing.",
+    description: "Match mode. exact (default) tries exact substring matching, then the unescaped target, then falls back to whole-line trim matching only if both miss, so an exact hit is never diluted. trim forces trim-only matching and ignores exact substring hits, which helps when the target text also occurs inside an indented line. On a trim match, replace stays bounded to the trimmed content so the original indentation is preserved and replacement leading/trailing whitespace is stripped, while delete removes the whole matched line(s).",
   })),
 };
 

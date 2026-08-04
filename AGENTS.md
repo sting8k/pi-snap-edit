@@ -10,7 +10,7 @@ Core behavior:
 - Provide `quick_edit` for atomic line/range replacements guarded by `expectedStartLine`.
 - Provide `target_edit` for exact target text `replace`/`insert`/`delete` with occurrence/count guards.
 - Match `target_edit` targets in tiers: exact substring, then unescaped, then whole-line trim. Later tiers run only when earlier tiers miss, so an exact hit is never diluted. Report the tier in the output whenever a match is not exact.
-- Derive trim semantics (replacement edge trimming) from the resolved occurrence kind, never from the caller's `matchMode`.
+- Derive trim semantics from the resolved occurrence kind, never from the caller's `matchMode`: a trim occurrence trims replacement edges on `replace` and expands to whole lines on `delete`.
 - Reject stale guards, invalid ranges, target misses, and failed batches without partial writes.
 - Preserve line endings, including CRLF and no-trailing-newline files.
 
@@ -63,7 +63,8 @@ Cover these cases when changing edit behavior:
 - insert/delete/replace line operations through `quick_edit`
 - exact target replace/insert/delete operations through `target_edit`
 - automatic match cascade: an exact hit must win over a trim occurrence elsewhere in the file
-- auto-cascade trim output must be byte-identical to explicit `matchMode: "trim"` on the same input
+- auto-cascade trim output must be byte-identical to explicit `matchMode: "trim"` on the same input, but only when the target does not also match exactly: if an exact substring hit exists, auto-cascade resolves to `raw` while explicit `matchMode: "trim"` ignores it, so the two paths legitimately differ
+- `delete` on a trim occurrence removes the whole line(s); `delete` on a raw/unescape occurrence stays literal
 - ambiguous trim matches must still reject
 - CRLF and no-trailing-newline preservation
 - escape-heavy strings when relevant

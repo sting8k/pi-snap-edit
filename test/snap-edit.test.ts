@@ -789,7 +789,9 @@ describe("target edits", () => {
     assert.equal(await readFile(file, "utf8"), "alpha\nif (debug) {\n  console.log(result);\n}\ngamma\n");
   });
 
-  it("deletes with matchMode=trim preserving indentation", async () => {
+  it("deletes the whole line for a matchMode=trim target", async () => {
+    // A trimmed match covers a whole line by definition, so delete removes the
+    // full line rather than leaving an orphaned indentation-only line.
     const original = "function foo() {\n    bar();\n}\n";
     const file = await tempFile("sample.ts", original);
 
@@ -797,7 +799,82 @@ describe("target edits", () => {
       { type: "delete", target: "  bar();", line: 2, matchMode: "trim" },
     ]);
 
-    assert.equal(await readFile(file, "utf8"), "function foo() {\n    \n}\n");
+    assert.equal(await readFile(file, "utf8"), "function foo() {\n}\n");
+  });
+
+  it("auto-trim delete removes the whole line", async () => {
+    const original = "const keep = 1;\n\tconst target = 2;\nconst tail = 3;\n";
+    const file = await tempFile("sample.ts", original);
+
+    await applyTargetEdits(file, [
+      { type: "delete", target: "    const target = 2;" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "const keep = 1;\nconst tail = 3;\n");
+  });
+
+  it("auto-trim delete matches explicit matchMode=trim delete byte-identical", async () => {
+    const original = "const keep = 1;\n\tconst target = 2;\nconst tail = 3;\n";
+    const auto = await tempFile("sample.ts", original);
+    const explicit = await tempFile("sample.ts", original);
+
+    await applyTargetEdits(auto, [{ type: "delete", target: "    const target = 2;" }]);
+    await applyTargetEdits(explicit, [{ type: "delete", target: "    const target = 2;", matchMode: "trim" }]);
+
+    assert.equal(await readFile(auto, "utf8"), await readFile(explicit, "utf8"));
+  });
+
+  it("exact delete keeps literal substring semantics (no whole-line eating)", async () => {
+    const original = "foo bar foo\n";
+    const file = await tempFile("sample.txt", original);
+
+    await applyTargetEdits(file, [{ type: "delete", target: "bar" }]);
+
+    assert.equal(await readFile(file, "utf8"), "foo  foo\n");
+  });
+
+  it("trim delete of the last line without a trailing newline leaves no dangling newline", async () => {
+    const file = await tempFile("sample.txt", "a\n\tb");
+    await applyTargetEdits(file, [{ type: "delete", target: "    b" }]);
+
+    assert.equal(await readFile(file, "utf8"), "a");
+  });
+
+  it("trim delete of the last line keeps the file trailing newline", async () => {
+    const file = await tempFile("sample.txt", "a\n\tb\n");
+    await applyTargetEdits(file, [{ type: "delete", target: "    b" }]);
+
+    assert.equal(await readFile(file, "utf8"), "a\n");
+  });
+
+  it("trim delete of a multi-line block removes every line", async () => {
+    const file = await tempFile("sample.ts", "a\n\tb\n\tc\nd\n");
+    await applyTargetEdits(file, [{ type: "delete", target: "    b\n    c" }]);
+
+    assert.equal(await readFile(file, "utf8"), "a\nd\n");
+  });
+
+  it("trim delete of multiple occurrences in a range removes each line", async () => {
+    const file = await tempFile("sample.txt", "a\n\tb\nx\n\tb\ny\n");
+    await applyTargetEdits(file, [
+      { type: "delete", target: "    b", range: { startLine: 2, endLine: 4 } },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "a\nx\ny\n");
+  });
+
+  it("trim delete preserves CRLF bytes", async () => {
+    const file = await tempFile("sample.txt", "a\r\n\tb\r\nc\r\n");
+    await applyTargetEdits(file, [{ type: "delete", target: "    b" }]);
+
+    assert.equal(await readFile(file, "utf8"), "a\r\nc\r\n");
+  });
+
+  it("trim delete of the only line yields an empty file", async () => {
+    const file = await tempFile("sample.txt", "\t\ta");
+    await applyTargetEdits(file, [{ type: "delete", target: "    a" }]);
+
+    assert.equal(await readFile(file, "utf8"), "");
   });
 
 

@@ -43,7 +43,8 @@ Tool behavior:
 - `target_edit` performs ordered exact-target operations: `replace`, `delete`, `insert_before`, and `insert_after`.
 - For `replace` and `delete`, selectors are flexible: omit both `line`/`range` when the target is unique in the file; use `line` for one occurrence on a line; use `range` for every occurrence fully inside an inclusive line range; or combine `line` + `range` to scope by range and verify one selected occurrence intersects the line.
 - `insert_before` and `insert_after` require `line` and insert full lines before/after the target occurrence.
-- `target_edit` matches in tiers automatically: exact substring, then the unescaped target, then whole-line trim matching. Trim matching only runs when the earlier tiers find nothing, so an exact hit stays authoritative. A trim match is bounded to the trimmed content so original indentation is preserved, replacement edge whitespace is stripped, and the following line ending is never consumed.
+- `target_edit` matches in tiers automatically: exact substring, then the unescaped target, then whole-line trim matching. Trim matching only runs when the earlier tiers find nothing, so an exact hit stays authoritative.
+- On a trim match, `replace` stays bounded to the trimmed content so the file's original indentation is preserved and replacement edge whitespace is stripped, while `delete` removes the whole matched line(s) instead of leaving an indentation-only blank line. Exact and unescaped matches keep literal substring semantics for both.
 - When a match is not exact, the tool output says how it matched (`matched via trim ...` or `matched via unescape ...`) so the target can be corrected. Exact matches stay silent.
 - `matchMode: "trim"` is still accepted and forces trim-only matching (exact substring matches are ignored), which is useful when the target text also appears inside an indented line.
 - Line endings are preserved, including CRLF and no-trailing-newline files.
