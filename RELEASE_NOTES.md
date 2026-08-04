@@ -1,3 +1,37 @@
+## pi-snap-edit v5.0.0
+
+Breaking release. `target_edit` now cascades through match tiers automatically instead of requiring `matchMode: "trim"`, and reports the tier whenever a match is not exact. Also removes `substitute_edit` entirely.
+
+### Changes
+
+- **Automatic match cascade for `target_edit`:** matching now falls through exact substring → unescaped target → whole-line trim. The trim tier only runs when both earlier tiers miss, so a unique exact hit is never diluted into an ambiguous reject. Indentation or trailing-whitespace drift succeeds without a retry, saving a read/edit round-trip.
+- **Match tier reporting:** when a match is not exact, the tool output states how it matched (`matched via trim (indentation or trailing whitespace differed)` or `matched via unescape (escape sequences in target were normalized)`), prefixed with `op[N]` in multi-op batches. Exact matches stay silent. Relaxed matching is deliberately visible so a wrong-but-plausible match can be caught rather than applied quietly.
+- **Trim semantics gated on occurrence kind:** replacement edge trimming now keys off the resolved occurrence being a trim match rather than the caller's `matchMode`. Auto-cascade and explicit `matchMode: "trim"` produce byte-identical output for the same input; previously the auto path would double the indentation.
+- **`matchMode` unchanged in meaning:** still accepted, still forces trim-only matching and ignores exact substring hits — useful when the target text also appears inside an indented line.
+- **Removed `substitute_edit`:** unregistered as a callable tool since v3.0.0; its engine, schema, and exports are now gone. The `substitute_edit` filter in active-tool preference is kept so saved state from older sessions is still cleaned up.
+- **Docs:** README, `target_edit` promptGuidelines, and the `matchMode` schema description updated to describe the cascade instead of instructing callers to opt into trim.
+
+### Breaking
+
+- `applySubstituteEdits` and the `Substitution` type are no longer exported.
+- `target_edit` succeeds on some inputs that previously failed with `target not found`. Callers relying on strict exact-only matching should pass `matchMode: "exact"`-equivalent unique targets, or a `line`/`range` selector.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed (97 tests).
+- `git diff --check` passed.
+- `npm pack --dry-run` passed.
+- A/B verified against the previous commit: auto-cascade output is identical to explicit `matchMode: "trim"` across single-line, no-indent replacement, multi-line block, `delete`, and CRLF/no-trailing-newline cases; exact-path behavior (exact hit beside a trim occurrence elsewhere, literal replacement, unescape fallback, `line` selector, explicit trim) is unchanged; ambiguous trim matches still reject.
+
+---
+
 ## pi-snap-edit v4.2.1
 
 Patch release. Makes edit failures machine-readable via structured error payloads, and improves `quick_edit` usability with `start="eof"` appends, an `indent_tolerant` whitespace shortcut, and optional end-line/count guards — all without weakening fail-closed atomic semantics.
