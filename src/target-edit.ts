@@ -286,6 +286,27 @@ function occurrenceCountNote(type: TargetEditOp["type"], count: number): string 
   }
 }
 
+function doubleIndentNote(
+  op: TargetEditOp,
+  occurrences: Occurrence[],
+  text: string,
+  offsets: number[],
+): string | undefined {
+  if (op.type !== "replace") return undefined;
+  const occurrence = occurrences[0];
+  if (!occurrence) return undefined;
+  // Trim-shaped matches already strip replacement edge whitespace, so the
+  // doubled-indent risk only applies to literal raw/unescape occurrences.
+  if (occurrence.kind !== "raw" && occurrence.kind !== "fallback") return undefined;
+  const lineStart = offsets[occurrence.startLine];
+  if (lineStart === undefined) return undefined;
+  const before = text.slice(lineStart, occurrence.start);
+  if (!/^[\t ]+$/.test(before)) return undefined;
+  const firstReplacementLine = op.replacement.split("\n")[0] ?? "";
+  if (!/^[ \t]/.test(firstReplacementLine)) return undefined;
+  return "replacement begins with whitespace that lands after the line's existing indentation - check for doubled indent";
+}
+
 function targetCandidates(lines: string[], needle: string): EditFailureCandidate[] {
   return closeLineMatches(lines, needle).map((match) => ({
     line: match.lineNumber,
@@ -827,6 +848,7 @@ export async function applyTargetEdits(
     const localNotes = [
       matchTierNote(occurrences),
       occurrenceCountNote(op.type, occurrences.length),
+      doubleIndentNote(op, occurrences, text, offsets),
     ].filter(Boolean) as string[];
     if (localNotes.length > 0) {
       const combined = localNotes.join("; ");

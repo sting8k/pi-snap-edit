@@ -51,7 +51,7 @@ export const TargetEditParams = Type.Object({
           startLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive start line." }),
           endLine: Type.Integer({ minimum: 1, description: "1-indexed inclusive end line." }),
         }, { description: "Inclusive line range; replaces every occurrence fully inside the range. May be combined with line as a validation hint." })),
-        replacement: Type.String({ description: "Replacement text. Use \\n for multi-line replacements." }),
+        replacement: Type.String({ description: "Replacement text. Use \\n for multi-line replacements. When the target starts at the first non-whitespace character of a line, the line's indentation is preserved in front of the match - do not re-indent the replacement's first line." }),
       }),
       Type.Object({
         type: Type.Literal("delete", { description: "Delete exact target text." }),

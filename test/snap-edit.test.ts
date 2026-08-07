@@ -411,6 +411,36 @@ describe("quick edits", () => {
     );
   });
 
+  it("reports the continuation tail when the guard is a prefix of the line", async () => {
+    const file = await tempFile("sample.ts", "escapes: \\d stays literal here, price $10`;\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "escapes: \\d stays literal here, price $10", lines: ["X()"] }]),
+      /guard matches the start of the line but the line continues with "`;"/,
+    );
+  });
+
+  it("points the first-difference column at the real escape divergence", async () => {
+    const file = await tempFile("sample.ts", "const RE = /^(\\d+)\\|\\s?(.*)$/;\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "const RE = /^(\\d+)\\s?(.*)$/;", lines: ["X()"] }]),
+      /first difference at column 20/,
+    );
+  });
+
+  it("reports the continuation tail for the end guard", async () => {
+    const file = await tempFile("sample.txt", "function foo() {\n  return 1;\n});\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{
+        start: 1,
+        end: 3,
+        expectedStartLine: "function foo() {",
+        expectedEndLine: "}",
+        lines: ["function foo() {", "  return 2;", "}"],
+      }]),
+      /guard matches the start of the line but the line continues with/,
+    );
+  });
+
   it("gives no copy-paste suggestion when the start line is out of range", async () => {
     const file = await tempFile("sample.txt", "one\ntwo\n");
     await assert.rejects(
@@ -1289,6 +1319,52 @@ describe("target edits", () => {
 
     assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree");
     assert.match(result, /^note: CRLF line endings preserved; file has no trailing newline \(preserved\)/);
+  });
+
+  it("warns on likely doubled indent for a whitespace-leading raw replacement", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n  if (handlers.has(name)) {\n    doThing();\n  }\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "if (handlers.has(name)) {\n    doThing();\n  }", replacement: "  if (handlers.has(name)) {\n  doNewThing();\n}" },
+    ]);
+
+    assert.match(result, /replacement begins with whitespace that lands after the line's existing indentation - check for doubled indent/);
+  });
+
+  it("emits no double-indent note for an unindented raw replacement", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n  if (handlers.has(name)) {\n    doThing();\n  }\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "if (handlers.has(name)) {\n    doThing();\n  }", replacement: "if (handlers.has(name)) {\n    doNewThing();\n}" },
+    ]);
+
+    assert.doesNotMatch(result, /check for doubled indent/);
+  });
+
+  it("emits no double-indent note when the occurrence starts at column 0", async () => {
+    const file = await tempFile("sample.txt", "foo\nbar\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "foo", line: 1, replacement: "  foo2" },
+    ]);
+
+    assert.doesNotMatch(result, /check for doubled indent/);
+  });
+
+  it("emits no double-indent note for a trim-shaped occurrence", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n  if (x) {\n    doThing();\n  }\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "if (x) {", matchMode: "trim", replacement: "  if (y) {" },
+    ]);
+
+    assert.doesNotMatch(result, /check for doubled indent/);
+  });
+
+  it("prefixes the double-indent note with op index in multi-op batches", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n  if (handlers.has(name)) {\n    doThing();\n  }\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "function run() {", line: 1, replacement: "function run2() {" },
+      { type: "replace", target: "if (handlers.has(name)) {\n    doThing();\n  }", replacement: "  if (handlers.has(name)) {\n  doNewThing();\n}" },
+    ]);
+
+    assert.match(result, /op\[1\] replacement begins with whitespace/);
   });
 
   it("prefixes occurrence-count notes with op index in multi-op batches", async () => {

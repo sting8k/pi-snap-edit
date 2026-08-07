@@ -181,18 +181,33 @@ function copyPasteGuard(actual: string, mode: GuardMode): string {
   return actual;
 }
 
+function commonPrefixLength(a: string, b: string): number {
+  const max = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < max && a[i] === b[i]) i++;
+  return i;
+}
+
 function firstDifferenceHint(actual: string, expected: string): string | undefined {
   if (actual.length === 0) return undefined;
+  const raw = expected;
   const guard = unescapeLiteralSequences(expected);
-  if (guard === actual) return undefined;
-  let i = 0;
-  const max = Math.min(guard.length, actual.length);
-  while (i < max && guard[i] === actual[i]) i++;
+  // The matcher tries the raw guard first and only then the unescaped form, so
+  // report using whichever form is closest to accepting against the actual line
+  // (the one with the longest common prefix). The unescaped form can collapse
+  // "\\" to "\" and thus diverge earlier than the raw guard even when the
+  // backslashes are byte-correct.
+  const best = commonPrefixLength(raw, actual) >= commonPrefixLength(guard, actual) ? raw : guard;
+  if (best === actual) return undefined;
+  const i = commonPrefixLength(best, actual);
+  if (i === best.length && i < actual.length) {
+    return `guard matches the start of the line but the line continues with ${JSON.stringify(actual.slice(i))}`;
+  }
   const column = i + 1;
   const ctx = 12;
   const from = Math.max(0, i - ctx);
   const to = i + ctx;
-  return `first difference at column ${column}: expected ${JSON.stringify(guard.slice(from, to + 1))} vs actual ${JSON.stringify(actual.slice(from, to + 1))}`;
+  return `first difference at column ${column}: expected ${JSON.stringify(best.slice(from, to + 1))} vs actual ${JSON.stringify(actual.slice(from, to + 1))}`;
 }
 
 function analyzeStartGuardFailure(
