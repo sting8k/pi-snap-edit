@@ -15,7 +15,7 @@ const LineEditParams = Type.Object({
     description: "Whitespace policy. strict (default): exact guards, no indent rewrite. indent_tolerant: trim guards + preserveIndent for replacement lines. Explicit expectedStartLineMatch/preserveIndent override the matching parts of this shortcut.",
   })),
   preserveIndent: Type.Optional(Type.Boolean({ description: "When true, prefixes the current start line indentation to each non-empty replacement line. Use unindented replacement lines. Defaults true when whitespace is indent_tolerant." })),
-  lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it." }),
+  lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it. Entries containing real newlines are split into multiple lines." }),
 }, { description: "Replace, insert, or delete by line number or inclusive line range." });
 
 const EofEditParams = Type.Object({

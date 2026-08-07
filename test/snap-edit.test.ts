@@ -217,6 +217,126 @@ describe("quick edits", () => {
     assert.equal(await readFile(file, "utf8"), "first\r\nSECOND\r\ninserted\r\nthird");
   });
 
+  it("splits an embedded \n inside a lines entry while keeping the file CRLF", async () => {
+    const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree\r\n");
+    await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["a\nb"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\r\na\r\nb\r\nthree\r\n");
+  });
+
+  it("splits an embedded CRLF (\r\n) inside a lines entry", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
+    await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["a\r\nb"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\na\nb\nthree\n");
+  });
+
+  it("keeps a literal backslash-n (two characters) intact in a lines entry", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
+    await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["a\\nb"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\na\\nb\nthree\n");
+  });
+
+  it("reports the true post-split line count in diff/context output", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
+    const report = await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["a\nb"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\na\nb\nthree\n");
+    assert.ok(report.includes("+ a\n+ b"), `expected split diff lines, got:\n${report}`);
+    assert.ok(!report.includes("+ a\nb"), "split lines must not be reported as a single line");
+  });
+
+  it("leaves LF files unaffected by newline-normalization", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
+    await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["a", "b"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\na\nb\nthree\n");
+  });
+
+  it("does not suggest indent_tolerant for the start guard when trim also finds nothing", async () => {
+    const file = await tempFile("sample.txt", "alpha\nbeta\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "gamma", lines: ["GAMMA"] }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_START_LINE_MISMATCH");
+        assert.equal(failure.suggested, undefined);
+        return true;
+      },
+    );
+  });
+
+  it("suggests indent_tolerant for the start guard when trim finds a match", async () => {
+    const file = await tempFile("sample.txt", "  value = false\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "value = false", lines: ["value = true"] }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_START_LINE_MISMATCH");
+        assert.deepEqual(failure.suggested, { whitespace: "indent_tolerant" });
+        return true;
+      },
+    );
+  });
+
+  it("does not suggest indent_tolerant for the end guard when trim also finds nothing", async () => {
+    const file = await tempFile("sample.txt", "function foo() {\n  return 1;\n}\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{
+        start: 1,
+        end: 3,
+        expectedStartLine: "function foo() {",
+        expectedEndLine: "};",
+        lines: ["function foo() {", "  return 2;", "}"],
+      }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_END_LINE_MISMATCH");
+        assert.equal(failure.suggested, undefined);
+        return true;
+      },
+    );
+  });
+
+  it("suggests indent_tolerant for the end guard when trim matches the end line", async () => {
+    const file = await tempFile("sample.txt", "function foo() {\n  return 1;\n};  \n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{
+        start: 1,
+        end: 3,
+        expectedStartLine: "function foo() {",
+        expectedEndLine: "};",
+        lines: ["function foo() {", "  return 2;", "}"],
+      }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_END_LINE_MISMATCH");
+        assert.deepEqual(failure.suggested, { whitespace: "indent_tolerant" });
+        return true;
+      },
+    );
+  });
+
+  it("preserveIndent does not prefix indent onto blank or whitespace-only replacement lines", async () => {
+    const file = await tempFile("sample.txt", "function run() {\n\tdoThing();\n}\n");
+    await applyQuickEdits(file, [
+      {
+        start: 2,
+        expectedStartLine: "doThing();",
+        expectedStartLineMatch: "trim",
+        preserveIndent: true,
+        lines: ["first()", "", "  ", "last()"],
+      },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n\tfirst()\n\n  \n\tlast()\n}\n");
+  });
+
   it("preserves a single UTF-8 BOM when editing the first line", async () => {
     const file = await tempFile("sample.txt", "\uFEFFone\ntwo\n");
 

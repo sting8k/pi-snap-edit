@@ -144,7 +144,7 @@ function leadingIndent(line: string): string {
 }
 
 function withPreservedIndent(lines: string[], indent: string): string[] {
-  return lines.map((line) => line === "" ? line : `${indent}${line}`);
+  return lines.map((line) => line.trim() === "" ? line : `${indent}${line}`);
 }
 
 function formatExpectedLineMatches(lines: string[], matches: number[], label: string, hint?: string): string {
@@ -236,7 +236,6 @@ function analyzeStartGuardFailure(
       score: Number(match.score.toFixed(3)),
     })),
   };
-  if (mode === "exact") result.suggested = { whitespace: "indent_tolerant" };
   return result;
 }
 
@@ -248,10 +247,18 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
   const content = await fs.readFile(absolutePath, "utf8");
   const source = splitBom(content);
   const lines = splitLines(source.text);
-  const resolved = edits.map((edit, index) => validateLineRange(lines.length, edit, `edit[${index}]`, index));
+  // Split embedded real newlines (LF or CRLF) inside each replacement line into
+  // separate lines before any validation or resolution. Only real newline
+  // characters split; a literal backslash-n (the two characters backslash + n)
+  // is not a real newline and stays intact.
+  const normalizedEdits: Edit[] = edits.map((edit) => ({
+    ...edit,
+    lines: edit.lines.flatMap((entry) => entry.split(/\r?\n/)),
+  }));
+  const resolved = normalizedEdits.map((edit, index) => validateLineRange(lines.length, edit, `edit[${index}]`, index));
 
-  for (let index = 0; index < edits.length; index++) {
-    const edit = edits[index]!;
+  for (let index = 0; index < normalizedEdits.length; index++) {
+    const edit = normalizedEdits[index]!;
     const resolvedEdit = resolved[index]!;
     const matchMode = resolveMatchMode(edit, `edit[${index}]`, index);
     const preserveIndent = resolvePreserveIndent(edit);
@@ -316,21 +323,21 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
       const actualEnd = lines[resolvedEdit.endLine - 1] ?? "";
       if (!lineContentMatches(actualEnd, edit.expectedEndLine, matchMode)) {
         const endMatches = matchingLineNumbers(lines, edit.expectedEndLine, matchMode);
+        const trimEndMatches = matchMode === "exact"
+          ? matchingLineNumbers(lines, edit.expectedEndLine, "trim")
+          : [];
         const sections: string[] = [];
         if (endMatches.length > 0) {
           sections.push(formatExpectedLineMatches(lines, endMatches, "Expected end line found at line(s)"));
-        } else if (matchMode === "exact") {
-          const trimEndMatches = matchingLineNumbers(lines, edit.expectedEndLine, "trim");
-          if (trimEndMatches.length > 0) {
-            sections.push(
-              formatExpectedLineMatches(
-                lines,
-                trimEndMatches,
-                "Expected end line matched by trim at line(s)",
-                trimMismatchHint("exact"),
-              ),
-            );
-          }
+        } else if (trimEndMatches.length > 0) {
+          sections.push(
+            formatExpectedLineMatches(
+              lines,
+              trimEndMatches,
+              "Expected end line matched by trim at line(s)",
+              trimMismatchHint("exact"),
+            ),
+          );
         }
         if (sections.length === 0) {
           const close = formatCloseLineMatches(lines, edit.expectedEndLine, "Close end-line matches");
@@ -345,7 +352,7 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
           }));
         let endSuggested: Record<string, unknown> | undefined;
         if (matchMode === "exact") {
-          endSuggested = { whitespace: "indent_tolerant" };
+          if (trimEndMatches.length > 0) endSuggested = { whitespace: "indent_tolerant" };
         } else if (endMatches.length === 1) {
           endSuggested = { end: endMatches[0]!, expectedEndLine: lines[endMatches[0]! - 1] ?? "" };
         }
