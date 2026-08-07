@@ -273,6 +273,19 @@ function matchTierNote(occurrences: Occurrence[]): string | undefined {
   return undefined;
 }
 
+function occurrenceCountNote(type: TargetEditOp["type"], count: number): string | undefined {
+  if (count <= 1) return undefined;
+  switch (type) {
+    case "replace":
+      return `replaced ${count} occurrences`;
+    case "delete":
+      return `deleted ${count} occurrences`;
+    case "insert_before":
+    case "insert_after":
+      return `applied at ${count} occurrences`;
+  }
+}
+
 function targetCandidates(lines: string[], needle: string): EditFailureCandidate[] {
   return closeLineMatches(lines, needle).map((match) => ({
     line: match.lineNumber,
@@ -801,7 +814,7 @@ export async function applyTargetEdits(
   const lineEnding = detectLineEnding(source.text);
   let state: LineState = { lines: splitLines(source.text), trailingNewline: source.text.endsWith("\n") };
   const diffs: EditDiff[] = [];
-  const tierNotes: string[] = [];
+  const notes: string[] = [];
   const multiOp = ops.length > 1;
 
   for (const [index, op] of ops.entries()) {
@@ -810,8 +823,14 @@ export async function applyTargetEdits(
     const text = toNormalized(state);
     const offsets = lineStartOffsets(state.lines);
     const occurrences = selectedOccurrences(op, text, state.lines, offsets, index);
-    const tierNote = matchTierNote(occurrences);
-    if (tierNote) tierNotes.push(multiOp ? `op[${index}] ${tierNote}` : tierNote);
+    const localNotes = [
+      matchTierNote(occurrences),
+      occurrenceCountNote(op.type, occurrences.length),
+    ].filter(Boolean) as string[];
+    if (localNotes.length > 0) {
+      const combined = localNotes.join("; ");
+      notes.push(multiOp ? `op[${index}] ${combined}` : combined);
+    }
 
     switch (op.type) {
       case "insert_before":
@@ -838,6 +857,7 @@ export async function applyTargetEdits(
   await fs.writeFile(absolutePath, joinBom(toFileContent(state, lineEnding), source.bom), "utf8");
 
   const parts: string[] = [];
+  if (notes.length > 0) parts.push(notes.join("\n"));
   const diff = formatDiffs(diffs);
   if (diff) parts.push(diff);
   const contextRanges = diffs.flatMap((diff) => {
@@ -846,6 +866,5 @@ export async function applyTargetEdits(
   });
   const contexts = formatContexts(state.lines, contextRanges);
   if (contexts) parts.push(contexts);
-  if (tierNotes.length > 0) parts.push(tierNotes.join("\n"));
   return parts.join("\n\n");
 }

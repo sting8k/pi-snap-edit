@@ -87,6 +87,11 @@ describe("quick-edit renderer helpers", () => {
   it("handles context-only quick-edit output", () => {
     assert.deepEqual(summarizeQuickEditOutput("1| alpha"), { additions: 0, removals: 0, hasDiff: false });
   });
+
+  it("summarizes additions/removals with leading notes", () => {
+    const text = "matched via trim (indentation differed)\n\n── diff ──\n:2\n- old\n+ new\n\n1| alpha";
+    assert.deepEqual(summarizeQuickEditOutput(text), { additions: 1, removals: 1, hasDiff: true });
+  });
   it("prefers quick_edit and cleans legacy substitute_edit from saved active tools", () => {
     assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit", "target_edit"]);
     assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "substitute_edit", "edit"]), ["read", "quick_edit", "target_edit"]);
@@ -191,6 +196,24 @@ describe("quick edits", () => {
     ]);
 
     assert.equal(await readFile(file, "utf8"), "a\nB\nC\nCC\nd\nE\n");
+  });
+
+  it("reports a post-edit range header for a multi-line replace that grows the file", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
+    const result = await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["a", "b", "c"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\na\nb\nc\nthree\n");
+    assert.match(result, /^:2-4$/m);
+    assert.match(result, /\+ a\n\+ b\n\+ c/);
+  });
+
+  it("reports a post-edit point header for a pure deletion", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
+    const result = await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: [] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\nthree\n");
+    assert.match(result, /^:2$/m);
+    assert.match(result, /- two/);
   });
 
   it("deletes a line or range when lines is empty", async () => {
@@ -1072,6 +1095,65 @@ describe("target edits", () => {
     assert.equal(await readFile(file, "utf8"), "function baz() {\n    qux();\n}\n");
     assert.match(result, /op\[1\] matched via trim \(indentation or trailing whitespace differed\)/);
     assert.doesNotMatch(result, /op\[0\] matched/);
+  });
+
+  it("reports correct post-rebase diff headers for a multi-op batch", async () => {
+    const file = await tempFile("sample.txt", "a\nb\nT\nc\nT\nd\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "T", line: 5, replacement: "X\nY" },
+      { type: "replace", target: "T", line: 3, replacement: "P\nQ" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "a\nb\nP\nQ\nc\nX\nY\nd\n");
+    assert.match(result, /^:6-7$/m, `expected rebased header :6-7, got:\n${result}`);
+    assert.match(result, /^:3-4$/m);
+  });
+
+  it("places the notes block before the diff and contexts", async () => {
+    const file = await tempFile("sample.ts", "function foo() {\n    bar();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "bar();", line: 2, matchMode: "trim", replacement: "baz();" },
+    ]);
+
+    const noteIndex = result.indexOf("matched via trim");
+    const diffIndex = result.indexOf("── diff ──");
+    const contextIndex = result.indexOf("2|");
+    assert.ok(noteIndex !== -1 && diffIndex !== -1 && contextIndex !== -1, result);
+    assert.ok(noteIndex < diffIndex && diffIndex < contextIndex,
+      `notes must precede diff and contexts (note=${noteIndex} diff=${diffIndex} ctx=${contextIndex})\n${result}`);
+  });
+
+  it("reports an occurrence count when a range replace changes multiple occurrences", async () => {
+    const file = await tempFile("sample.txt", "a\nfoo\nb\nfoo\nc\nfoo\nd\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "foo", range: { startLine: 1, endLine: 7 }, replacement: "bar" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "a\nbar\nb\nbar\nc\nbar\nd\n");
+    assert.match(result, /^replaced 3 occurrences[\s\S]*── diff ──/);
+    assert.ok(result.indexOf("replaced 3 occurrences") < result.indexOf("── diff ──"), result);
+  });
+
+  it("reports no occurrence-count note for a single-occurrence replace", async () => {
+    const file = await tempFile("sample.txt", "a\nfoo\nb\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "foo", line: 2, replacement: "bar" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "a\nbar\nb\n");
+    assert.doesNotMatch(result, /occurrences/);
+  });
+
+  it("prefixes occurrence-count notes with op index in multi-op batches", async () => {
+    const file = await tempFile("sample.txt", "a\nfoo\nb\nfoo\nc\nfoo\nd\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "foo", line: 2, replacement: "bar" },
+      { type: "delete", target: "foo", range: { startLine: 1, endLine: 6 } },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "a\nbar\nb\n\nc\n\nd\n");
+    assert.match(result, /op\[1\] deleted 2 occurrences/);
+    assert.doesNotMatch(result, /op\[0\] .*occurrences/);
   });
 
   it("keeps an exact hit authoritative over a trim occurrence elsewhere", async () => {

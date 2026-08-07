@@ -44,12 +44,13 @@ export function formatDiffs(diffs: EditDiff[]): string {
   const chunks: string[] = ["── diff ──"];
 
   for (const diff of diffs) {
-    const oldEnd = diff.oldStart + Math.max(0, diff.oldLines.length - 1);
-    if (diff.oldLines.length <= 1 && diff.newLines.length <= 1) {
-      chunks.push(`:${diff.oldStart}`);
+    // Headers use post-edit (new-file) coordinates, matching the authoritative
+    // refreshed-context numbering. oldStart is intentionally not used here; it
+    // remains on EditDiff for rebasePriorDiffs.
+    if (diff.newLines.length <= 1) {
+      chunks.push(`:${diff.newStart}`);
     } else {
-      const newEnd = diff.newStart + Math.max(0, diff.newLines.length - 1);
-      chunks.push(`:${diff.oldStart}-${Math.max(oldEnd, newEnd)}`);
+      chunks.push(`:${diff.newStart}-${diff.newStart + diff.newLines.length - 1}`);
     }
 
 
