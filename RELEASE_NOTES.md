@@ -1,3 +1,41 @@
+## pi-snap-edit v5.1.0
+
+Reliability and ergonomics release. Trim matching gets an unescape parity fix and indentation adjustment, `quick_edit` no longer corrupts CRLF files when a replacement entry contains real newlines, and tool output was reworked around what three live agent evaluations showed agents actually struggle with. No API changes.
+
+### Changes
+
+- **Trim cascade parity:** the automatic cascade now also tries the trimmed form of the unescaped target, so a target that is both escape-encoded and indentation-drifted resolves the same way as explicit `matchMode: "trim"`. Trim semantics are gated on the resolved occurrence shape, fixing doubled indentation on `replace` and orphaned indentation-only lines on `delete` for those matches.
+- **Indentation adjustment on trim matches:** when a multi-line replacement is written at a different indentation than the matched block, the uniform shift is applied to the remaining replacement lines so the whole block lands at the file's indentation. Non-uniform drift falls back to literal insertion.
+- **Leading blank lines in trim targets:** whitespace-only lines are now trimmed from both edges of a target, not just the trailing edge. Blank lines inside a target still match literally.
+- **`quick_edit` newline normalization:** replacement entries containing real LF/CRLF newlines are split into separate lines before validation. Previously such an entry produced mixed line endings in a CRLF file and made reported line counts drift from the file.
+- **Byte state is visible:** `read` output and edit output note CRLF line endings and missing trailing newlines when a file is not plain LF with a trailing newline. `read` only claims trailing-newline state when the true end of file is visible in the result. Plain LF files are unchanged.
+- **Guard failure recovery:** guard mismatches now suggest a copy-paste `expectedStartLine`/`expectedEndLine` whose value is verified to round-trip through guard unescaping, and report the first differing column using whichever of the raw or unescaped guard form is closest to matching. When the guard is a prefix of the line, the missing tail is quoted instead of a column. The `expectedStartLineMatch: "trim"` hint is only printed when a trim match actually exists.
+- **Doubled-indent warning:** a raw `target_edit` `replace` whose match starts right after a line's indentation now warns when the replacement's first line begins with whitespace. Matching semantics are unchanged.
+- **Diff headers use post-edit line numbers,** matching the refreshed context below them; previously multi-line headers mixed pre- and post-edit coordinates and were wrong in both whenever an edit changed the line count. Operations that change more than one occurrence now report the count, and `target_edit` notes moved above the diff.
+- **Docs:** `quick_edit` schema no longer implies a mid-file insert exists (line edits replace their span; EOF append is the only insert), and the `target_edit` `target` description states that exact bytes are tried first so literal backslash sequences in files are matched verbatim.
+
+### Compatibility
+
+No API or tool-name changes. Behavior differences worth knowing:
+
+- A target with leading blank lines now matches content directly instead of requiring a preceding blank line in the file.
+- Multi-line replacements through the trim tier may be re-indented to match the file instead of being inserted literally.
+- `quick_edit` replacement entries containing real newlines now produce multiple lines instead of one line with an embedded newline.
+- Success output gained note lines for non-default byte state, non-exact match tiers, multi-occurrence operations, and likely doubled indentation.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed: 167 tests, up from 111 at v5.0.0.
+- `npm pack --dry-run` passed.
+- Three live agent evaluations against fixture files (escape-heavy TypeScript, JSON, CRLF without trailing newline, tab-indented Makefile and Python) each completed 10/10 edits verified byte-exact, including one round where the agent was denied all byte inspection and relied only on tool output.
+
 ## pi-snap-edit v5.0.0
 
 Breaking release. `target_edit` now cascades through match tiers automatically instead of requiring `matchMode: "trim"`, and reports the tier whenever a match is not exact. Also removes `substitute_edit` entirely.

@@ -39,6 +39,9 @@ Tool behavior:
 - On session start, the extension removes Pi's built-in `edit` tool from the active set and adds `quick_edit` and `target_edit`.
 - `quick_edit` performs atomic line/range replacements using 1-indexed line numbers; requires `expectedStartLine` for each edit.
 - `expectedStartLine` guards the current `start` line only; it does not verify the full range or detect line shifts from insertions/deletions above.
+- `quick_edit` line edits replace their span; there is no mid-file insert. Append at EOF with `start: "eof"`, or insert mid-file with `target_edit` `insert_before`/`insert_after` (or by replacing a line with `[newLines..., originalLine]`).
+- Replacement entries containing real newlines are split into separate lines, so line endings and reported line counts stay consistent.
+- Guard mismatches report the first differing column (or the missing tail when the guard is a prefix) and suggest a copy-paste `expectedStartLine` that is verified to match on resend.
 - `quick_edit` defaults to exact guard matching. Use `expectedStartLineMatch: "trim"` plus `preserveIndent: true` when indentation/trailing whitespace is uncertain and replacement lines should inherit the current line indentation.
 - `target_edit` performs ordered exact-target operations: `replace`, `delete`, `insert_before`, and `insert_after`.
 - For `replace` and `delete`, selectors are flexible: omit both `line`/`range` when the target is unique in the file; use `line` for one occurrence on a line; use `range` for every occurrence fully inside an inclusive line range; or combine `line` + `range` to scope by range and verify one selected occurrence intersects the line.
@@ -47,7 +50,9 @@ Tool behavior:
 - On a trim match, `replace` stays bounded to the trimmed content so the file's original indentation is preserved and replacement edge whitespace is stripped, while `delete` removes the whole matched line(s) instead of leaving an indentation-only blank line. Exact and unescaped matches keep literal substring semantics for both.
 - When a match is not exact, the tool output says how it matched (`matched via trim ...` or `matched via unescape ...`) so the target can be corrected. Exact matches stay silent.
 - `matchMode: "trim"` is still accepted and forces trim-only matching (exact substring matches are ignored), which is useful when the target text also appears inside an indented line.
-- Line endings are preserved, including CRLF and no-trailing-newline files.
+- On a trim match, a uniform indentation shift between the target and the matched block is applied to the rest of the replacement lines, so multi-line replacements written at drifted indentation land at the file's indentation.
+- Line endings are preserved, including CRLF and no-trailing-newline files. `read` and edit output note these properties when a file is not plain LF with a trailing newline, so byte state is visible without external inspection.
+- Diff headers use post-edit line numbers, matching the refreshed context below them. An operation that changes more than one occurrence reports the count.
 - Invalid `quick_edit` ranges/overlaps, invalid `target_edit` selectors/ranges, target misses, and `expectedStartLine` mismatches are rejected without partial writes.
 - Failure hints may list moved/close matches with line numbers. Multi-line target misses can include first-line near matches, last-line near matches, and capped anchor block candidates. Fuzzy hints are diagnostic-only and never applied automatically.
 
