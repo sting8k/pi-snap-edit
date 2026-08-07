@@ -11,12 +11,18 @@ type LineState = {
   trailingNewline: boolean;
 };
 
+type IndentAdjustment =
+  | { kind: "add"; whitespace: string }
+  | { kind: "remove"; whitespace: string }
+  | { kind: "none" };
+
 type Occurrence = {
   start: number;
   end: number;
   startLine: number;
   endLine: number;
-  kind: "raw" | "fallback" | "trimmed";
+  kind: "raw" | "fallback" | "trimmed" | "trimmed-unescaped";
+  indent?: IndentAdjustment;
 };
 
 function toNormalized(state: LineState): string {
@@ -100,13 +106,53 @@ function trimTrailingLength(s: string): number {
 
 function trimmedTargetLines(target: string): string[] {
   const targetLines = target.split("\n");
-  // Ignore trailing empty/whitespace-only lines that often come from copying a
-  // block including its terminating newline. Trim matching is meant to be
-  // whitespace-tolerant, so a dangling newline should not break the match.
+  // Ignore leading and trailing empty/whitespace-only lines that often come
+  // from copying a block with a leading blank line or its terminating newline.
+  // Trim matching is meant to be whitespace-tolerant at the block edges, so an
+  // edge blank line should not break the match. Lines strictly inside the
+  // target still match literally.
   while (targetLines.length > 1 && targetLines[targetLines.length - 1]!.trim() === "") {
     targetLines.pop();
   }
+  while (targetLines.length > 1 && targetLines[0]!.trim() === "") {
+    targetLines.shift();
+  }
   return targetLines;
+}
+
+function leadingWhitespace(line: string): string {
+  return line.match(/^[\t ]*/)?.[0] ?? "";
+}
+
+function getIndentAdjustment(expectedLines: string[], actualLines: string[]): IndentAdjustment | undefined {
+  // Uniform indentation delta between the target (as the caller wrote it) and
+  // the matched file lines. Every non-blank line pair must share the same kind
+  // and the same whitespace string; otherwise the drift is non-uniform and no
+  // adjustment applies (callers fall back to today's literal replacement).
+  let adjustment: IndentAdjustment | undefined;
+  for (let i = 0; i < expectedLines.length; i++) {
+    if (expectedLines[i]!.trim() === "") continue;
+    const expected = leadingWhitespace(expectedLines[i]!);
+    const actual = leadingWhitespace(actualLines[i]!);
+    const current =
+      actual === expected
+        ? { kind: "none" as const }
+        : actual.endsWith(expected)
+          ? { kind: "add" as const, whitespace: actual.slice(0, actual.length - expected.length) }
+          : expected.endsWith(actual)
+            ? { kind: "remove" as const, whitespace: expected.slice(0, expected.length - actual.length) }
+            : undefined;
+    if (!current) return undefined;
+    if (!adjustment) {
+      adjustment = current;
+    } else if (
+      adjustment.kind !== current.kind ||
+      (adjustment.kind !== "none" && current.kind !== "none" && adjustment.whitespace !== current.whitespace)
+    ) {
+      return undefined;
+    }
+  }
+  return adjustment ?? { kind: "none" };
 }
 
 function hasMeaningfulTrimTarget(target: string): boolean {
@@ -140,7 +186,18 @@ function findTrimmedOccurrences(text: string, target: string): Occurrence[] {
       const hasNewline = lastLine.end > 0 && text[lastLine.end - 1] === "\n";
       const contentEnd = lastLine.end - (hasNewline ? 1 : 0);
       const end = Math.max(start, contentEnd - trimTrailingLength(lastLine.text));
-      occurrences.push({ start, end, startLine: 0, endLine: 0, kind: "trimmed" });
+      const indent = getIndentAdjustment(
+        targetLines,
+        textLines.slice(i, i + targetLineCount).map((line) => line.text),
+      );
+      occurrences.push({
+        start,
+        end,
+        startLine: 0,
+        endLine: 0,
+        kind: "trimmed",
+        ...(indent !== undefined ? { indent } : {}),
+      });
     }
   }
   return occurrences;
@@ -153,21 +210,31 @@ function findTargetOccurrences(text: string, target: string, matchMode: "exact" 
     // inside an indented line and change the effective column.
     const trimmed = findTrimmedOccurrences(text, target);
     const unescaped = unescapeLiteralSequences(target);
-    const fallback = unescaped === target ? [] : findTrimmedOccurrences(text, unescaped).map((o) => ({ ...o, kind: "fallback" as const }));
+    const fallback = unescaped === target
+      ? []
+      : findTrimmedOccurrences(text, unescaped).map((o) => ({ ...o, kind: "trimmed-unescaped" as const }));
     return { raw: [], fallback, trimmed };
   }
   const raw = findNeedleOccurrences(text, target);
   const unescaped = unescapeLiteralSequences(target);
-  const fallback = unescaped === target ? [] : findNeedleOccurrences(text, unescaped).map((o) => ({ ...o, kind: "fallback" as const }));
-  // Auto-cascade: only when neither the raw target nor its unescaped form
-  // matches do we compute whole-line trim matches, so indentation or
+  const fallback: Occurrence[] = unescaped === target ? [] : findNeedleOccurrences(text, unescaped).map((o) => ({ ...o, kind: "fallback" as const }));
+  // Auto-cascade: only when neither the raw target nor its unescaped substring
+  // form matches do we compute whole-line trim matches, so indentation or
   // trailing-whitespace drift still succeeds. Gating on the earlier tiers
   // missing keeps an exact match authoritative: it must not be diluted by a
   // trim occurrence elsewhere, which would turn a unique exact hit into an
-  // ambiguous reject in the no-line/range path (allOccurrences).
-  const trimmed = raw.length === 0 && fallback.length === 0
-    ? findTrimmedOccurrences(text, target)
-    : [];
+  // ambiguous reject in the no-line/range path (allOccurrences). It mirrors
+  // explicit trim mode exactly: trim of the target, plus trim-of-unescaped
+  // when the target contains escape sequences, so auto-cascade stays
+  // byte-identical to explicit matchMode:"trim" for escaped targets with
+  // indentation drift.
+  let trimmed: Occurrence[] = [];
+  if (raw.length === 0 && fallback.length === 0) {
+    trimmed = findTrimmedOccurrences(text, target);
+    if (unescaped !== target) {
+      fallback.push(...findTrimmedOccurrences(text, unescaped).map((o) => ({ ...o, kind: "trimmed-unescaped" as const })));
+    }
+  }
   return { raw, fallback, trimmed };
 }
 
@@ -194,6 +261,9 @@ function selectOccurrences(
 }
 
 function matchTierNote(occurrences: Occurrence[]): string | undefined {
+  if (occurrences.some((occurrence) => occurrence.kind === "trimmed-unescaped")) {
+    return "matched via unescape+trim (escaped target and indentation/trailing whitespace normalized)";
+  }
   if (occurrences.some((occurrence) => occurrence.kind === "trimmed")) {
     return "matched via trim (indentation or trailing whitespace differed)";
   }
@@ -537,18 +607,54 @@ function trimReplacementEdges(replacement: string): string {
   return lines.join("\n");
 }
 
+function isTrimmedShape(occurrence: Occurrence): boolean {
+  // Any occurrence whose bounds came from findTrimmedOccurrences is bounded to
+  // the trimmed file content, so replace must trim replacement edges and delete
+  // must expand to whole lines regardless of whether it also went through
+  // unescaping. Labeling trim-of-unescaped as "fallback" would otherwise
+  // double-indent on replace and orphan indentation-only lines on delete.
+  return occurrence.kind === "trimmed" || occurrence.kind === "trimmed-unescaped";
+}
+
+function applyIndentAdjustment(trimmedReplacement: string, adjustment: IndentAdjustment): string | undefined {
+  // Shift replacement lines 2..n to match the file's uniform indentation drift.
+  // Line 1's indent is preserved by the file (it sits before occurrence.start),
+  // so only subsequent lines are adjusted. Blank lines are left untouched. For
+  // a "remove" shift, any line that lacks the prefix abandons the adjustment
+  // (all-or-nothing) so no line is partially rewritten.
+  if (adjustment.kind === "none") return trimmedReplacement;
+  const lines = trimmedReplacement.split("\n");
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (line.trim() === "") continue;
+    if (adjustment.kind === "add") {
+      lines[i] = adjustment.whitespace + line;
+    } else if (line.startsWith(adjustment.whitespace)) {
+      lines[i] = line.slice(adjustment.whitespace.length);
+    } else {
+      return undefined;
+    }
+  }
+  return lines.join("\n");
+}
+
 function replaceRanges(text: string, occurrences: Occurrence[], replacement: string): string {
   // Gate the replacement semantics on the actual occurrence kind rather than
   // the op's matchMode. A trimmed occurrence (explicit matchMode:"trim", or
   // auto-cascade when raw/unescaped both miss) is bounded to the trimmed file
   // content, so the replacement must have its edges trimmed or the file's
   // original indentation would be doubled. Raw/fallback occurrences keep the
-  // replacement literal.
-  const effectiveReplacement = occurrences.some((occurrence) => occurrence.kind === "trimmed")
-    ? trimReplacementEdges(replacement)
-    : replacement;
+  // replacement literal. The trim tier detects a uniform indentation drift
+  // between the caller's target and the file; each occurrence stores its own
+  // delta and applies it to replacement lines 2..n so they land at the file's
+  // indent instead of the caller's drifted indent.
   let updated = text;
   for (const occurrence of [...occurrences].reverse()) {
+    let effectiveReplacement = isTrimmedShape(occurrence) ? trimReplacementEdges(replacement) : replacement;
+    if (isTrimmedShape(occurrence) && occurrence.indent && occurrence.indent.kind !== "none") {
+      const adjusted = applyIndentAdjustment(effectiveReplacement, occurrence.indent);
+      if (adjusted !== undefined) effectiveReplacement = adjusted;
+    }
     updated = `${updated.slice(0, occurrence.start)}${effectiveReplacement}${updated.slice(occurrence.end)}`;
   }
   return updated;
@@ -565,7 +671,7 @@ function deleteRanges(text: string, occurrences: Occurrence[]): string {
   for (const occurrence of [...occurrences].reverse()) {
     let start = occurrence.start;
     let end = occurrence.end;
-    if (occurrence.kind === "trimmed") {
+    if (isTrimmedShape(occurrence)) {
       start = text.lastIndexOf("\n", occurrence.start - 1) + 1;
       const terminatingNewline = text.indexOf("\n", occurrence.end);
       if (terminatingNewline !== -1) {

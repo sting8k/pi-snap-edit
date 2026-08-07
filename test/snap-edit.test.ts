@@ -1017,6 +1017,240 @@ describe("target edits", () => {
     assert.equal(await readFile(auto, "utf8"), await readFile(explicit, "utf8"));
   });
 
+  it("auto-cascade trim-of-unescaped replace matches explicit matchMode:trim on escaped+indent-drifted target", async () => {
+    // A target that both contains escape sequences (literal \t written as \\t)
+    // and has indentation drift previously matched under explicit trim but was
+    // rejected by the auto-cascade (which never tried trim-of-unescaped). Auto
+    // output must be byte-identical to explicit trim output -- including the
+    // uniform indent adjustment applied to the flat block.
+    const setup = "function run() {\n\tlog(\"a\tb\");\n\tteardown();\n}\n";
+    const target = "log(\"a\\tb\");\nteardown();";
+    const replacement = "log(\"a\tb\");\ncleanup();";
+
+    const auto = await tempFile("sample.ts", setup);
+    const autoResult = await applyTargetEdits(auto, [{ type: "replace", target, replacement }]);
+
+    const explicit = await tempFile("sample.ts", setup);
+    await applyTargetEdits(explicit, [{ type: "replace", target, matchMode: "trim", replacement }]);
+
+    assert.equal(await readFile(auto, "utf8"), await readFile(explicit, "utf8"));
+    assert.equal(await readFile(auto, "utf8"), "function run() {\n\tlog(\"a\tb\");\n\tcleanup();\n}\n");
+    assert.match(autoResult, /matched via unescape\+trim/);
+  });
+
+  it("trim-of-unescaped replace preserves indentation and trims replacement edges", async () => {
+    // Regression for the kind-labeling bug: trim-of-unescaped occurrences were
+    // labeled "fallback", so replaceRanges skipped edge-trimming and doubled the
+    // file's indentation. They must behave as trimmed, and the uniform indent
+    // adjustment re-indents the dedented flat-block replacement lines 2+.
+    const file = await tempFile("sample.ts", "function run() {\n\tlog(\"a\tb\");\n\tteardown();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "log(\"a\\tb\");\nteardown();", matchMode: "trim", replacement: "log(\"a\tb\");\ncleanup();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n\tlog(\"a\tb\");\n\tcleanup();\n}\n");
+    assert.match(result, /matched via unescape\+trim/);
+  });
+
+  it("trim-of-unescaped delete removes whole lines including the terminator", async () => {
+    const file = await tempFile("sample.ts", "function a() {\n\tif (x) {\n\t\treturn 1;\n\t}\n}\n");
+    await applyTargetEdits(file, [
+      { type: "delete", target: "if (x) {\n\\treturn 1;\n}", matchMode: "trim" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function a() {\n}\n");
+  });
+
+  it("uniform indent adjustment adds the file's indent to a dedented multi-line replacement", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n    setup();\n    teardown();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "setup();\nteardown();", matchMode: "trim", replacement: "init();\ncleanup();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n    init();\n    cleanup();\n}\n");
+    assert.match(result, /matched via trim/);
+  });
+
+  it("uniform indent adjustment removes an over-indented prefix from a multi-line replacement", async () => {
+    const file = await tempFile("sample.ts", "function run() {\nsetup();\nteardown();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "    setup();\n    teardown();", matchMode: "trim", replacement: "    init();\n    cleanup();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\ninit();\ncleanup();\n}\n");
+    assert.match(result, /matched via trim/);
+  });
+
+  it("uniform indent adjustment handles a tab-based delta", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n\tsetup();\n\tteardown();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "setup();\nteardown();", matchMode: "trim", replacement: "init();\ncleanup();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n\tinit();\n\tcleanup();\n}\n");
+    assert.match(result, /matched via trim/);
+  });
+
+  it("non-uniform indentation drift across target lines disables the indent adjustment", async () => {
+    // The drift is 4 spaces on line 1 but 8 on line 2, so no uniform adjustment
+    // applies: line 1 lands at the file's indent while line 2+ stay literal.
+    const file = await tempFile("sample.ts", "function run() {\n    setup();\n        teardown();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "setup();\nteardown();", matchMode: "trim", replacement: "init();\ncleanup();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n    init();\ncleanup();\n}\n");
+    assert.match(result, /matched via trim/);
+  });
+
+  it("remove shift falls back to literal when a replacement line lacks the prefix", async () => {
+    // Replacement line 2 is indented 2 spaces, not the 4 to remove, so the
+    // whole adjustment is abandoned (all-or-nothing) and lines insert literally.
+    const file = await tempFile("sample.ts", "function run() {\nsetup();\nteardown();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "    setup();\n    teardown();", matchMode: "trim", replacement: "    init();\n  cleanup();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\ninit();\n  cleanup();\n}\n");
+    assert.match(result, /matched via trim/);
+  });
+
+  it("trimmed-unescaped occurrence also gets the uniform indent adjustment", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n    log(\"a\tb\");\n    teardown();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "log(\"a\\tb\");\nteardown();", matchMode: "trim", replacement: "log(\"a\tb\");\ncleanup();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n    log(\"a\tb\");\n    cleanup();\n}\n");
+    assert.match(result, /matched via unescape\+trim/);
+  });
+
+  it("auto-cascade and explicit trim stay byte-identical with the indent adjustment applied", async () => {
+    const setup = "function run() {\n    setup();\n    teardown();\n}\n";
+    const target = "setup();\nteardown();";
+    const replacement = "init();\ncleanup();";
+
+    const auto = await tempFile("sample.ts", setup);
+    await applyTargetEdits(auto, [{ type: "replace", target, replacement }]);
+
+    const explicit = await tempFile("sample.ts", setup);
+    await applyTargetEdits(explicit, [{ type: "replace", target, matchMode: "trim", replacement }]);
+
+    assert.equal(await readFile(auto, "utf8"), await readFile(explicit, "utf8"));
+    assert.equal(await readFile(auto, "utf8"), "function run() {\n    init();\n    cleanup();\n}\n");
+  });
+
+  it("indent adjustment preserves CRLF line endings", async () => {
+    const file = await tempFile("sample.ts", "function run() {\r\n\tsetup();\r\n\tteardown();\r\n}\r\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "setup();\nteardown();", matchMode: "trim", replacement: "init();\ncleanup();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\r\n\tinit();\r\n\tcleanup();\r\n}\r\n");
+    assert.match(result, /matched via trim/);
+  });
+
+  it("range mode applies each trim occurrence's own indent delta", async () => {
+    const file = await tempFile("sample.ts", "function a() {\n    foo();\n    bar();\n}\nfunction b() {\n\tfoo();\n\tbar();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "foo();\nbar();", matchMode: "trim", replacement: "foo();\nbaz();", range: { startLine: 1, endLine: 8 } },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function a() {\n    foo();\n    baz();\n}\nfunction b() {\n\tfoo();\n\tbaz();\n}\n");
+    assert.match(result, /matched via trim/);
+  });
+
+  it("trim target with a leading blank line matches with indent drift", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n    setup();\n    teardown();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "\nsetup();", matchMode: "trim", replacement: "init();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n    init();\n    teardown();\n}\n");
+    assert.match(result, /matched via trim/);
+  });
+
+  it("trim target with both leading and trailing blank lines matches", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n    setup();\n    teardown();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "\nsetup();\nteardown();\n", matchMode: "trim", replacement: "init();\ncleanup();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n    init();\n    cleanup();\n}\n");
+    assert.match(result, /matched via trim/);
+  });
+
+  it("auto-cascade and explicit trim stay byte-identical for a leading-blank-line target", async () => {
+    const setup = "function run() {\n    setup();\n    teardown();\n}\n";
+    const target = "\nsetup();\nteardown();";
+    const replacement = "init();\ncleanup();";
+
+    const auto = await tempFile("sample.ts", setup);
+    await applyTargetEdits(auto, [{ type: "replace", target, replacement }]);
+
+    const explicit = await tempFile("sample.ts", setup);
+    await applyTargetEdits(explicit, [{ type: "replace", target, matchMode: "trim", replacement }]);
+
+    assert.equal(await readFile(auto, "utf8"), await readFile(explicit, "utf8"));
+    assert.equal(await readFile(auto, "utf8"), "function run() {\n    init();\n    cleanup();\n}\n");
+  });
+
+  it("a blank line strictly inside the trim target still requires a blank line in the file", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n    setup();\n    teardown();\n}\n");
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "setup();\n\nteardown();", matchMode: "trim", replacement: "init();\ncleanup();" },
+      ]),
+      /target not found/,
+    );
+    assert.equal(await readFile(file, "utf8"), "function run() {\n    setup();\n    teardown();\n}\n");
+  });
+
+  it("a whitespace-only trim target still rejects", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n    setup();\n}\n");
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "\n  \n", matchMode: "trim", replacement: "x();" },
+      ]),
+      /must contain non-whitespace content when matchMode is trim/,
+    );
+    assert.equal(await readFile(file, "utf8"), "function run() {\n    setup();\n}\n");
+  });
+
+  it("leading-blank-line trim target combines with the uniform indent adjustment", async () => {
+    const file = await tempFile("sample.ts", "function run() {\n    setup();\n    teardown();\n}\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "\nsetup();\nteardown();", matchMode: "trim", replacement: "init();\ncleanup();" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "function run() {\n    init();\n    cleanup();\n}\n");
+    assert.match(result, /matched via trim/);
+  });
+
+  it("unescaped-substring hit still wins and trim-of-unescaped does not run", async () => {
+    // When the unescaped substring tier hits, the auto-cascade must not fall
+    // through to trim-of-unescaped. Result uses literal substring semantics (the
+    // leading tab is consumed) and reports the unescape tier, not unescape+trim.
+    const file = await tempFile("sample.txt", "alpha\n\tfoo;\nbeta\n");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "\\tfoo;", replacement: "bar;" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "alpha\nbar;\nbeta\n");
+    assert.match(result, /matched via unescape \(escape sequences in target were normalized\)/);
+    assert.doesNotMatch(result, /unescape\+trim/);
+  });
+
+  it("rejects ambiguous trim-of-unescaped with no line or range", async () => {
+    const file = await tempFile("sample.txt", "a\n \t foo;\nb\n  \t  foo;\nc\n");
+    await assert.rejects(
+      async () => applyTargetEdits(file, [
+        { type: "replace", target: "\\tfoo;", replacement: "bar;" },
+      ]),
+      /occurs 2 times in the file.*provide line or range/
+    );
+  });
+
 });
 
 describe("structured failures", () => {

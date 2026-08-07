@@ -63,7 +63,7 @@ Cover these cases when changing edit behavior:
 - insert/delete/replace line operations through `quick_edit`
 - exact target replace/insert/delete operations through `target_edit`
 - automatic match cascade: an exact hit must win over a trim occurrence elsewhere in the file
-- auto-cascade trim output must be byte-identical to explicit `matchMode: "trim"` on the same input, but only when the target does not also match exactly: if an exact substring hit exists, auto-cascade resolves to `raw` while explicit `matchMode: "trim"` ignores it, so the two paths legitimately differ
+- auto-cascade trim output must be byte-identical to explicit `matchMode: "trim"` on the same input, but only when the target does not also match exactly: if an exact substring hit exists, auto-cascade resolves to `raw` while explicit `matchMode: "trim"` ignores it, so the two paths legitimately differ; this parity also holds for escaped targets that reach trim-of-unescaped (reported as unescape+trim)
 - `delete` on a trim occurrence removes the whole line(s); `delete` on a raw/unescape occurrence stays literal
 - ambiguous trim matches must still reject
 - CRLF and no-trailing-newline preservation
