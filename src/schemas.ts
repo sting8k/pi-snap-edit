@@ -32,7 +32,7 @@ export const QuickEditParams = Type.Object({
 });
 
 const TargetBase = {
-  target: Type.String({ minLength: 1, description: "Exact literal target text to find. Use \\n for multi-line targets." }),
+  target: Type.String({ minLength: 1, description: "Exact literal target text to find. Use \\n for multi-line targets. Exact bytes are tried first; unescaping is only a fallback when exact misses, so literal backslash sequences in files are matched verbatim." }),
   matchMode: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], {
     default: "exact",
     description: "Match mode. exact (default) tries exact substring matching, then the unescaped target, then falls back to whole-line trim matching only if both miss, so an exact hit is never diluted. trim forces trim-only matching and ignores exact substring hits, which helps when the target text also occurs inside an indented line. On a trim match, replace stays bounded to the trimmed content so the original indentation is preserved and replacement leading/trailing whitespace is stripped, while delete removes the whole matched line(s).",

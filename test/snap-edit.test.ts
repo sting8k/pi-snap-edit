@@ -92,6 +92,11 @@ describe("quick-edit renderer helpers", () => {
     const text = "matched via trim (indentation differed)\n\n── diff ──\n:2\n- old\n+ new\n\n1| alpha";
     assert.deepEqual(summarizeQuickEditOutput(text), { additions: 1, removals: 1, hasDiff: true });
   });
+
+  it("summarizeQuickEditOutput ignores leading byte notes", () => {
+    const text = "note: CRLF line endings preserved\n\n── diff ──\n:2\n- old\n+ new\n\n1| alpha";
+    assert.deepEqual(summarizeQuickEditOutput(text), { additions: 1, removals: 1, hasDiff: true });
+  });
   it("prefers quick_edit and cleans legacy substitute_edit from saved active tools", () => {
     assert.deepEqual(preferQuickEditTools(["read", "edit", "bash"]), ["read", "bash", "quick_edit", "target_edit"]);
     assert.deepEqual(preferQuickEditTools(["read", "quick_edit", "substitute_edit", "edit"]), ["read", "quick_edit", "target_edit"]);
@@ -132,12 +137,12 @@ describe("quick edits", () => {
     assert.equal(await readFile(file, "utf8"), "one\ntwo\nthree\n");
   });
 
-  it("suggests close start-line matches without editing", async () => {
+  it("suggests close start-line matches and a first-difference pointer without editing", async () => {
     const file = await tempFile("sample.txt", "const enabled = false;\n");
 
     await assert.rejects(
       () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "const enabled = fasle;", lines: ["const enabled = true;"] }]),
-      /Close start-line matches:[\s\S]*line 1: const enabled = false;[\s\S]*expectedStartLineMatch="trim"/,
+      /Close start-line matches:[\s\S]*line 1: const enabled = false;[\s\S]*first difference at column/,
     );
     assert.equal(await readFile(file, "utf8"), "const enabled = false;\n");
   });
@@ -277,7 +282,7 @@ describe("quick edits", () => {
     assert.equal(await readFile(file, "utf8"), "one\na\nb\nthree\n");
   });
 
-  it("does not suggest indent_tolerant for the start guard when trim also finds nothing", async () => {
+  it("suggests copy-paste expectedStartLine when trim also finds nothing", async () => {
     const file = await tempFile("sample.txt", "alpha\nbeta\n");
     await assert.rejects(
       () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "gamma", lines: ["GAMMA"] }]),
@@ -285,7 +290,7 @@ describe("quick edits", () => {
         const failure = parseSnapEditError(error);
         assert.ok(failure);
         assert.equal(failure.error_code, "EXPECTED_START_LINE_MISMATCH");
-        assert.equal(failure.suggested, undefined);
+        assert.deepEqual(failure.suggested, { expectedStartLine: "alpha" });
         return true;
       },
     );
@@ -305,7 +310,7 @@ describe("quick edits", () => {
     );
   });
 
-  it("does not suggest indent_tolerant for the end guard when trim also finds nothing", async () => {
+  it("suggests copy-paste expectedEndLine when trim also finds nothing", async () => {
     const file = await tempFile("sample.txt", "function foo() {\n  return 1;\n}\n");
     await assert.rejects(
       () => applyQuickEdits(file, [{
@@ -319,7 +324,7 @@ describe("quick edits", () => {
         const failure = parseSnapEditError(error);
         assert.ok(failure);
         assert.equal(failure.error_code, "EXPECTED_END_LINE_MISMATCH");
-        assert.equal(failure.suggested, undefined);
+        assert.deepEqual(failure.suggested, { expectedEndLine: "}" });
         return true;
       },
     );
@@ -358,6 +363,117 @@ describe("quick edits", () => {
     ]);
 
     assert.equal(await readFile(file, "utf8"), "function run() {\n\tfirst()\n\n  \n\tlast()\n}\n");
+  });
+
+  it("round-trips the suggested expectedStartLine for a regex-ish guard", async () => {
+    const file = await tempFile("sample.ts", "const RE = /^(\\d+)\\|\\s?(.*)$/;\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "const RE = /^(\\d+)\\s?(.*)$/;", lines: ["const RE2"] }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_START_LINE_MISMATCH");
+        assert.equal(failure.suggested?.expectedStartLine, "const RE = /^(\\d+)\\|\\s?(.*)$/;");
+        return true;
+      },
+    );
+    // Resending the suggested guard verbatim must succeed (round-trip).
+    await applyQuickEdits(file, [{ start: 1, expectedStartLine: "const RE = /^(\\d+)\\|\\s?(.*)$/;", lines: ["const RE2"] }]);
+    assert.equal(await readFile(file, "utf8"), "const RE2\n");
+  });
+
+  it("reports the first-difference column in the mismatch message", async () => {
+    const file = await tempFile("sample.txt", "const enabled = false;\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "const enabled = fasle;", lines: ["const enabled = true;"] }]),
+      /first difference at column 19: expected "enabled = fasle;" vs actual "enabled = false;"/,
+    );
+  });
+
+  it("gives no copy-paste suggestion when the start line is out of range", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 5, expectedStartLine: "two", lines: ["TWO"] }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "RANGE_OUT_OF_BOUNDS");
+        assert.equal(failure.suggested, undefined);
+        return true;
+      },
+    );
+  });
+
+  it("round-trips the suggested expectedEndLine for a wrong end guard", async () => {
+    const file = await tempFile("sample.txt", "function foo() {\n  return 1;\n}\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{
+        start: 1,
+        end: 3,
+        expectedStartLine: "function foo() {",
+        expectedEndLine: "};",
+        lines: ["function foo() {", "  return 2;", "}"],
+      }]),
+      (error: unknown) => {
+        const failure = parseSnapEditError(error);
+        assert.ok(failure);
+        assert.equal(failure.error_code, "EXPECTED_END_LINE_MISMATCH");
+        assert.equal(failure.suggested?.expectedEndLine, "}");
+        return true;
+      },
+    );
+    // Resend the suggested end guard verbatim -> succeeds.
+    await applyQuickEdits(file, [{
+      start: 1,
+      end: 3,
+      expectedStartLine: "function foo() {",
+      expectedEndLine: "}",
+      lines: ["function foo() {", "  return 2;", "}"],
+    }]);
+    assert.equal(await readFile(file, "utf8"), "function foo() {\n  return 2;\n}\n");
+  });
+
+  it("omits the trim hint when the mismatch is not whitespace", async () => {
+    const file = await tempFile("sample.txt", "const enabled = false;\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "const enabled = fasle;", lines: ["const enabled = true;"] }]),
+      (error: unknown) => {
+        assert.doesNotMatch(String(error), /expectedStartLineMatch="trim"/);
+        return true;
+      },
+    );
+  });
+
+  it("keeps the trim hint for a whitespace-only mismatch", async () => {
+    const file = await tempFile("sample.txt", "  value = false\n");
+    await assert.rejects(
+      () => applyQuickEdits(file, [{ start: 1, expectedStartLine: "value = false", lines: ["value = true"] }]),
+      /expectedStartLineMatch="trim"/,
+    );
+  });
+
+  it("notes CRLF preservation in quick_edit success output", async () => {
+    const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree\r\n");
+    const result = await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["TWO"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree\r\n");
+    assert.match(result, /^note: CRLF line endings preserved/);
+  });
+
+  it("notes a missing trailing newline in quick_edit success output", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree");
+    const result = await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["TWO"] }]);
+
+    assert.equal(await readFile(file, "utf8"), "one\nTWO\nthree");
+    assert.match(result, /^note: file has no trailing newline \(preserved\)/);
+  });
+
+  it("emits no byte note for plain LF with a trailing newline", async () => {
+    const file = await tempFile("sample.txt", "one\ntwo\nthree\n");
+    const result = await applyQuickEdits(file, [{ start: 2, expectedStartLine: "two", lines: ["TWO"] }]);
+
+    assert.match(result, /^── diff ──/);
+    assert.doesNotMatch(result, /^note:/);
   });
 
   it("preserves a single UTF-8 BOM when editing the first line", async () => {
@@ -1142,6 +1258,16 @@ describe("target edits", () => {
 
     assert.equal(await readFile(file, "utf8"), "a\nbar\nb\n");
     assert.doesNotMatch(result, /occurrences/);
+  });
+
+  it("notes preserved byte properties in target_edit success output", async () => {
+    const file = await tempFile("sample.txt", "one\r\ntwo\r\nthree");
+    const result = await applyTargetEdits(file, [
+      { type: "replace", target: "two", line: 2, replacement: "TWO" },
+    ]);
+
+    assert.equal(await readFile(file, "utf8"), "one\r\nTWO\r\nthree");
+    assert.match(result, /^note: CRLF line endings preserved; file has no trailing newline \(preserved\)/);
   });
 
   it("prefixes occurrence-count notes with op index in multi-op batches", async () => {

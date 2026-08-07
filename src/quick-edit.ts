@@ -7,10 +7,11 @@ import {
   lineContentMatches,
   matchingLineNumbers,
   trimMismatchHint,
+  unescapeLiteralSequences,
   type ExpectedStartLineMatch,
 } from "./match-helpers.js";
 import type { Edit } from "./schemas.js";
-import { detectLineEnding, joinBom, splitBom, splitLines } from "./text.js";
+import { bytePropertiesNote, detectLineEnding, joinBom, splitBom, splitLines } from "./text.js";
 
 type ResolvedEdit = {
   startLine: number;
@@ -168,6 +169,32 @@ function candidateFromLines(lines: string[], lineNumbers: number[]): EditFailure
   }));
 }
 
+function copyPasteGuard(actual: string, mode: GuardMode): string {
+  // Guards are compared after unescapeLiteralSequences, so a literal backslash
+  // sequence in the actual line (e.g. "\t") could be mangled on a verbatim
+  // resend. Doubling backslashes makes the unescaper reconstruct the exact
+  // original bytes; the enabled line always round-trips (identity check).
+  if (/\\[ntr\\]/.test(actual)) {
+    const doubled = actual.replace(/\\/g, "\\\\");
+    if (lineContentMatches(actual, doubled, mode)) return doubled;
+  }
+  return actual;
+}
+
+function firstDifferenceHint(actual: string, expected: string): string | undefined {
+  if (actual.length === 0) return undefined;
+  const guard = unescapeLiteralSequences(expected);
+  if (guard === actual) return undefined;
+  let i = 0;
+  const max = Math.min(guard.length, actual.length);
+  while (i < max && guard[i] === actual[i]) i++;
+  const column = i + 1;
+  const ctx = 12;
+  const from = Math.max(0, i - ctx);
+  const to = i + ctx;
+  return `first difference at column ${column}: expected ${JSON.stringify(guard.slice(from, to + 1))} vs actual ${JSON.stringify(actual.slice(from, to + 1))}`;
+}
+
 function analyzeStartGuardFailure(
   lines: string[],
   expectedStartLine: string,
@@ -225,8 +252,11 @@ function analyzeStartGuardFailure(
 
   const close = closeLineMatches(lines, expectedStartLine);
   const closeMatches = formatCloseLineMatches(lines, expectedStartLine, "Close start-line matches");
-  const trimTail = trimMismatchHint(mode);
-  const sections = [closeMatches, escapeHint, trimTail].filter(Boolean) as string[];
+  const trimTail = mode === "exact" && matchingLineNumbers(lines, expectedStartLine, "trim").length > 0
+    ? trimMismatchHint(mode)
+    : "";
+  const sections = [closeMatches, escapeHint, firstDifferenceHint(actualAtStart, expectedStartLine), trimTail]
+    .filter(Boolean) as string[];
   if (close.length === 0) sections.push("Read the file to see current content.");
   const result: StartGuardFailure = {
     sections: sections.length > 0 ? sections : ["Read the file to see current content."],
@@ -236,6 +266,9 @@ function analyzeStartGuardFailure(
       score: Number(match.score.toFixed(3)),
     })),
   };
+  if (startLine >= 1 && startLine <= lines.length) {
+    result.suggested = { expectedStartLine: copyPasteGuard(actualAtStart, mode) };
+  }
   return result;
 }
 
@@ -343,6 +376,8 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
           const close = formatCloseLineMatches(lines, edit.expectedEndLine, "Close end-line matches");
           if (close) sections.push(close);
         }
+        const endFirstDiff = firstDifferenceHint(actualEnd, edit.expectedEndLine);
+        if (endFirstDiff) sections.push(endFirstDiff);
         const endCandidates = endMatches.length > 0
           ? candidateFromLines(lines, endMatches)
           : closeLineMatches(lines, edit.expectedEndLine).map((match) => ({
@@ -352,9 +387,15 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
           }));
         let endSuggested: Record<string, unknown> | undefined;
         if (matchMode === "exact") {
-          if (trimEndMatches.length > 0) endSuggested = { whitespace: "indent_tolerant" };
+          if (trimEndMatches.length > 0) {
+            endSuggested = { whitespace: "indent_tolerant" };
+          } else if (resolvedEdit.endLine >= 1 && resolvedEdit.endLine <= lines.length) {
+            endSuggested = { expectedEndLine: copyPasteGuard(actualEnd, matchMode) };
+          }
         } else if (endMatches.length === 1) {
           endSuggested = { end: endMatches[0]!, expectedEndLine: lines[endMatches[0]! - 1] ?? "" };
+        } else if (resolvedEdit.endLine >= 1 && resolvedEdit.endLine <= lines.length) {
+          endSuggested = { expectedEndLine: copyPasteGuard(actualEnd, matchMode) };
         }
         throwEditError(
           {
@@ -430,7 +471,9 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
     offset += newLines.length - oldCount;
   }
 
+  const byteNote = bytePropertiesNote(lineEnding, hasTrailingNewline);
   const parts: string[] = [];
+  if (byteNote) parts.push(byteNote);
   const diff = formatDiffs(diffs);
   if (diff) parts.push(diff);
   const contexts = formatContexts(updated, contextRanges);

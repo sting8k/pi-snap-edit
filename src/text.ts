@@ -22,3 +22,11 @@ export function splitLines(content: string): string[] {
 export function detectLineEnding(content: string): "\r\n" | "\n" {
   return content.includes("\r\n") ? "\r\n" : "\n";
 }
+
+export function bytePropertiesNote(lineEnding: "\r\n" | "\n", hasTrailingNewline: boolean): string | undefined {
+  if (lineEnding === "\n" && hasTrailingNewline) return undefined;
+  const parts: string[] = [];
+  if (lineEnding === "\r\n") parts.push("CRLF line endings preserved");
+  if (!hasTrailingNewline) parts.push("file has no trailing newline (preserved)");
+  return `note: ${parts.join("; ")}`;
+}

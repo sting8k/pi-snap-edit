@@ -4,7 +4,7 @@ import { throwEditError, type EditFailureCandidate } from "./edit-error.js";
 import { closeLineMatches, formatCloseLineMatches, formatMultiLineTargetHints } from "./fuzzy.js";
 import { unescapeLiteralSequences } from "./match-helpers.js";
 import type { TargetEditOp, TargetInsertBeforeOp, TargetInsertAfterOp } from "./schemas.js";
-import { detectLineEnding, joinBom, splitBom, splitLines } from "./text.js";
+import { bytePropertiesNote, detectLineEnding, joinBom, splitBom, splitLines } from "./text.js";
 
 type LineState = {
   lines: string[];
@@ -812,7 +812,8 @@ export async function applyTargetEdits(
   const content = await fs.readFile(absolutePath, "utf8");
   const source = splitBom(content);
   const lineEnding = detectLineEnding(source.text);
-  let state: LineState = { lines: splitLines(source.text), trailingNewline: source.text.endsWith("\n") };
+  const hasTrailingNewline = source.text.endsWith("\n");
+  let state: LineState = { lines: splitLines(source.text), trailingNewline: hasTrailingNewline };
   const diffs: EditDiff[] = [];
   const notes: string[] = [];
   const multiOp = ops.length > 1;
@@ -853,6 +854,9 @@ export async function applyTargetEdits(
       diffs.push(diff);
     }
   }
+
+  const byteNote = bytePropertiesNote(lineEnding, hasTrailingNewline);
+  if (byteNote) notes.unshift(byteNote);
 
   await fs.writeFile(absolutePath, joinBom(toFileContent(state, lineEnding), source.bom), "utf8");
 
