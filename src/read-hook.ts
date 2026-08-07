@@ -1,4 +1,4 @@
-import { splitBom, splitLines } from "./text.js";
+import { bytePropertiesNote, detectLineEnding, splitBom, splitLines } from "./text.js";
 
 export type HashReadTextOptions = {
   startLine?: number;
@@ -20,11 +20,19 @@ function numberReadLines(text: string, options: HashReadTextOptions = {}): strin
   const maxLine = Math.max(endLine, options.totalLineCount ?? 0);
   const width = String(maxLine).length;
 
+  // Surfaced byte-level state: CRLF is detectable from any visible line, but a
+  // missing trailing newline can only be asserted when the true end of file is
+  // visible (i.e. the read result is not truncated beyond its shown content).
+  const eofVisible = !(noticeMatch !== null && hasRealContinuation);
+  const hasTrailingNewline = eofVisible ? rawBody.endsWith("\n") : true;
+  const note = bytePropertiesNote(detectLineEnding(rawBody), hasTrailingNewline, false);
+  const noteLine = note ? `\n${note}` : "";
+
   const numbered = bodyLines
     .map((line, index) => `${String(startLine + index).padStart(width, " ")}| ${line}`)
     .join("\n");
 
-  return numbered ? `${numbered}${suffix}` : suffix.trimStart();
+  return numbered ? `${numbered}${noteLine}${suffix}` : suffix.trimStart();
 }
 
 export function numberReadText(text: string, options: HashReadTextOptions = {}): string {

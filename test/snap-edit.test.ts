@@ -57,10 +57,10 @@ describe("text helpers", () => {
   });
 
   it("numbers CRLF read output without hidden carriage returns", () => {
-    assert.equal(numberReadText("one\r\ntwo\r\n"), "1| one\n2| two");
+    assert.equal(numberReadText("one\r\ntwo\r\n"), "1| one\n2| two\nnote: CRLF line endings");
     assert.equal(
       numberReadText("one\r\ntwo\r\n\n[Showing lines 1-2 of 3. Use offset=3 to continue.]", { totalLineCount: 3 }),
-      "1| one\n2| two\n\n[Showing lines 1-2 of 3. Use offset=3 to continue.]",
+      "1| one\n2| two\nnote: CRLF line endings\n\n[Showing lines 1-2 of 3. Use offset=3 to continue.]",
     );
   });
 
@@ -74,6 +74,27 @@ describe("text helpers", () => {
 
   it("preserves FEFF content when numbering a later read chunk", () => {
     assert.equal(numberReadText("\uFEFFmiddle\n", { startLine: 2 }), "2| \uFEFFmiddle");
+  });
+
+  it("notes a missing trailing newline in read output", () => {
+    assert.equal(numberReadText("one\ntwo"), "1| one\n2| two\nnote: file has no trailing newline");
+  });
+
+  it("keeps plain LF read output byte-identical", () => {
+    assert.equal(numberReadText("one\ntwo\n"), "1| one\n2| two");
+  });
+
+  it("does not claim trailing-newline state when the read is truncated", () => {
+    const out = numberReadText("one\ntwo\n\n[Showing lines 1-2 of 3. Use offset=3 to continue.]", { totalLineCount: 3 });
+    assert.equal(out, "1| one\n2| two\n\n[Showing lines 1-2 of 3. Use offset=3 to continue.]");
+    assert.doesNotMatch(out, /note:/);
+  });
+
+  it("keeps padded numbering intact when a byte note is present", () => {
+    const big = Array.from({ length: 12 }, (_, i) => `line${i + 1}`).join("\n");
+    const out = numberReadText(big);
+    assert.match(out, /^ 1\| line1\n 2\| line2/);
+    assert.match(out, /12\| line12\nnote: file has no trailing newline$/);
   });
 });
 

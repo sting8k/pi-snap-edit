@@ -23,10 +23,10 @@ export function detectLineEnding(content: string): "\r\n" | "\n" {
   return content.includes("\r\n") ? "\r\n" : "\n";
 }
 
-export function bytePropertiesNote(lineEnding: "\r\n" | "\n", hasTrailingNewline: boolean): string | undefined {
+export function bytePropertiesNote(lineEnding: "\r\n" | "\n", hasTrailingNewline: boolean, preserved = true): string | undefined {
   if (lineEnding === "\n" && hasTrailingNewline) return undefined;
   const parts: string[] = [];
-  if (lineEnding === "\r\n") parts.push("CRLF line endings preserved");
-  if (!hasTrailingNewline) parts.push("file has no trailing newline (preserved)");
+  if (lineEnding === "\r\n") parts.push(preserved ? "CRLF line endings preserved" : "CRLF line endings");
+  if (!hasTrailingNewline) parts.push(preserved ? "file has no trailing newline (preserved)" : "file has no trailing newline");
   return `note: ${parts.join("; ")}`;
 }

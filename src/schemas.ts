@@ -5,7 +5,7 @@ export const FileStatParams = Type.Object({
 });
 
 const LineEditParams = Type.Object({
-  start: Type.Integer({ minimum: 1, description: "1-indexed start line number. Use lineCount + 1 with no end to insert at EOF (legacy; prefer start=\"eof\")." }),
+  start: Type.Integer({ minimum: 1, description: "1-indexed start line number. With \"lines\", REPLACES that line/range (there is no mid-file insert). Use lineCount + 1 with no end to append at EOF (legacy; prefer start=\"eof\")." }),
   end: Type.Optional(Type.Integer({ minimum: 1, description: "Optional 1-indexed inclusive end line number." })),
   expectedStartLine: Type.Optional(Type.String({ description: "Guard for the current start line (required except for an empty-file insert). Exact by default; use whitespace=\"indent_tolerant\" or expectedStartLineMatch=trim for whitespace-tolerant guards. JSON-style escape sequences (e.g. \\n, \\t) are unescaped before comparing." })),
   expectedStartLineMatch: Type.Optional(Type.Union([Type.Literal("exact"), Type.Literal("trim")], { description: "How to compare expectedStartLine/expectedEndLine. Defaults to exact unless whitespace is indent_tolerant (then trim). trim ignores leading/trailing whitespace." })),
@@ -16,7 +16,7 @@ const LineEditParams = Type.Object({
   })),
   preserveIndent: Type.Optional(Type.Boolean({ description: "When true, prefixes the current start line indentation to each non-empty replacement line. Use unindented replacement lines. Defaults true when whitespace is indent_tolerant." })),
   lines: Type.Array(Type.String(), { description: "Replacement lines for the line/range. Empty array deletes it. Entries containing real newlines are split into multiple lines." }),
-}, { description: "Replace, insert, or delete by line number or inclusive line range." });
+}, { description: "Replace or delete a line/range by line number; \"lines\" replaces the start..end span (there is no mid-file insert). EOF append is the only insert (start:\"eof\" or legacy lineCount+1). For mid-file insert use target_edit's insert_before/insert_after, or replace the line with [newLines..., originalLine]." });
 
 const EofEditParams = Type.Object({
   start: Type.Literal("eof", { description: "Append at end of file." }),
@@ -27,7 +27,7 @@ export const QuickEditParams = Type.Object({
   path: Type.String({ description: "Path to the file to edit." }),
   edits: Type.Array(
     Type.Union([EofEditParams, LineEditParams]),
-    { minItems: 1, description: 'Line-number edits or EOF appends to apply atomically. For EOF, use exactly { start: "eof", lines: [...] }.' },
+    { minItems: 1, description: 'Replace/delete line edits or EOF appends to apply atomically. Line edits replace their span (no mid-file insert); EOF append uses start:"eof". For EOF, use exactly { start: "eof", lines: [...] }.' },
   ),
 });
 
