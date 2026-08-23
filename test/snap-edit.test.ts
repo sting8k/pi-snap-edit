@@ -1379,6 +1379,361 @@ describe("target edits", () => {
     assert.doesNotMatch(result, /op\[0\] .*occurrences/);
   });
 
+  describe("range selector misuse note", () => {
+    it("notes when a range replace only replaces the matched target inside a wider range", async () => {
+      const file = await tempFile("sample.ts", [
+        "function a() {",
+        "  const x = 1;",
+        "  call();",
+        "  const y = 2;",
+        "}",
+      ].join("\n") + "\n");
+      const result = await applyTargetEdits(file, [
+        { type: "replace", target: "  call();", range: { startLine: 1, endLine: 5 }, replacement: "  const a = 1;\n  const b = 2;\n  const c = 3;" },
+      ]);
+
+      assert.match(result, /range 1-5 is an occurrence selector; only the matched target \(line 3\) was replaced - other lines in the range were left unchanged; to replace a full line span use quick_edit start\/end/);
+    });
+
+    it("reports covered lines for multiple occurrences inside a wider range", async () => {
+      const file = await tempFile("sample.txt", "a\nfoo\nb\nfoo\nc\nfoo\nd\n");
+      const result = await applyTargetEdits(file, [
+        { type: "replace", target: "foo", range: { startLine: 1, endLine: 7 }, replacement: "one\ntwo" },
+      ]);
+
+      assert.match(result, /range 1-7 is an occurrence selector; only the matched target \(3 of 7 lines\) was replaced/);
+    });
+
+    it("emits no range note when the match covers the whole range", async () => {
+      const file = await tempFile("sample.ts", "const old = 1;\nconst two = 2;\n");
+      const result = await applyTargetEdits(file, [
+        { type: "replace", target: "const old = 1;", range: { startLine: 1, endLine: 1 }, replacement: "const a = 1;\nconst b = 2;" },
+      ]);
+
+      assert.doesNotMatch(result, /occurrence selector/);
+    });
+
+    it("emits no range note when the replacement does not expand the match", async () => {
+      const file = await tempFile("sample.ts", "a\n  call();\nb\nc\nd\n");
+      const result = await applyTargetEdits(file, [
+        { type: "replace", target: "  call();", range: { startLine: 1, endLine: 5 }, replacement: "call2();" },
+      ]);
+
+      assert.doesNotMatch(result, /occurrence selector/);
+    });
+
+    it("emits no range note for delete ops even when matches cover less than the range", async () => {
+      const file = await tempFile("sample.txt", "a\nfoo\nb\nfoo\nc\n");
+      const result = await applyTargetEdits(file, [
+        { type: "delete", target: "foo", range: { startLine: 1, endLine: 5 } },
+      ]);
+
+      assert.doesNotMatch(result, /occurrence selector/);
+    });
+
+    it("notes for the combined line+range selector path too", async () => {
+      const file = await tempFile("sample.ts", [
+        "function a() {",
+        "  const x = 1;",
+        "  call();",
+        "  const y = 2;",
+        "}",
+      ].join("\n") + "\n");
+      const result = await applyTargetEdits(file, [
+        { type: "replace", target: "  call();", line: 3, range: { startLine: 1, endLine: 5 }, replacement: "  const a = 1;\n  const b = 2;\n  const c = 3;" },
+      ]);
+
+      assert.match(result, /range 1-5 is an occurrence selector/);
+    });
+
+    it("prefixes the range note with op index in multi-op batches", async () => {
+      const file = await tempFile("sample.ts", "const one = 1;\nconst two = 2;\nconst three = 3;\n");
+      const result = await applyTargetEdits(file, [
+        { type: "replace", target: "const one = 1;", line: 1, replacement: "const uno = 1;" },
+        { type: "replace", target: "const three = 3;", range: { startLine: 1, endLine: 3 }, replacement: "const tres = 3;\nconst cuatro = 4;" },
+      ]);
+
+      assert.match(result, /op\[1\] range 1-3 is an occurrence selector/);
+    });
+  });
+
+  describe("insert duplication note", () => {
+    it("warns when insert_after re-includes the anchor line", async () => {
+      const file = await tempFile("sample.ts", "const a = 1;\nanchor();\nconst c = 3;\n");
+      const result = await applyTargetEdits(file, [
+        { type: "insert_after", target: "anchor();", line: 2, lines: ["anchor();", "next();"] },
+      ]);
+
+      assert.equal(await readFile(file, "utf8"), "const a = 1;\nanchor();\nanchor();\nnext();\nconst c = 3;\n");
+      assert.match(result, /insert_after lines\[0\] duplicates the anchor line - the anchor is not replaced, so it now appears twice/);
+    });
+
+    it("warns when insert_before re-includes the anchor line at the far edge", async () => {
+      const file = await tempFile("sample.ts", "const a = 1;\nanchor();\nconst c = 3;\n");
+      const result = await applyTargetEdits(file, [
+        { type: "insert_before", target: "anchor();", line: 2, lines: ["prev();", "anchor();"] },
+      ]);
+
+      assert.equal(await readFile(file, "utf8"), "const a = 1;\nprev();\nanchor();\nanchor();\nconst c = 3;\n");
+      assert.match(result, /insert_before lines\[1\] duplicates the anchor line/);
+    });
+
+    it("does not warn when only the far edge of insert_after repeats the anchor", async () => {
+      // Appending a new block that ends with the same closing line as the
+      // anchor is a legitimate pattern (stacked closers).
+      const file = await tempFile("sample.ts", "it(\"one\", () => {\n  run();\n});\n");
+      const result = await applyTargetEdits(file, [
+        { type: "insert_after", target: "});", line: 3, lines: ["it(\"two\", () => {", "  run2();", "});"] },
+      ]);
+
+      assert.doesNotMatch(result, /duplicates the anchor line/);
+    });
+
+    it("does not warn on blank adjacent edges", async () => {
+      const file = await tempFile("sample.ts", "const a = 1;\nanchor();\nconst c = 3;\n");
+      const result = await applyTargetEdits(file, [
+        { type: "insert_after", target: "anchor();", line: 2, lines: ["", "next();"] },
+      ]);
+
+      assert.doesNotMatch(result, /duplicates the anchor line/);
+    });
+
+    it("warns when an EOF append duplicates the file's last line", async () => {
+      const file = await tempFile("sample.ts", "const a = 1;\nconst b = 2;\n");
+      const result = await applyQuickEdits(file, [
+        { start: "eof", lines: ["const b = 2;", "const c = 3;"] },
+      ]);
+
+      assert.equal(await readFile(file, "utf8"), "const a = 1;\nconst b = 2;\nconst b = 2;\nconst c = 3;\n");
+      assert.match(result, /appended lines\[0\] duplicates the last line of the file - the last line is kept, so it now appears twice/);
+    });
+
+    it("does not warn on a normal EOF append", async () => {
+      const file = await tempFile("sample.ts", "const a = 1;\nconst b = 2;\n");
+      const result = await applyQuickEdits(file, [
+        { start: "eof", lines: ["const c = 3;"] },
+      ]);
+
+      assert.doesNotMatch(result, /duplicates the last line/);
+    });
+  });
+
+  describe("batch shift hints", () => {
+    it("explains stale line hints after earlier ops shifted lines, with a verified suggested line", async () => {
+      const content = [
+        "import {",
+        "  getCurrentPeer,",
+        "} from \"./herdr\";",
+        "",
+        "const one = 1;",
+        "const getStatus = deps.getPeerStatus;",
+        "const two = 2;",
+      ].join("\n") + "\n";
+      const file = await tempFile("sample.ts", content);
+
+      await assert.rejects(
+        applyTargetEdits(file, [
+          {
+            type: "replace",
+            target: "import {\n  getCurrentPeer,\n} from \"./herdr\";",
+            replacement: "import {\n  getCurrentPeer,\n  getPeerStatus,\n  renamePane,\n  rootDir,\n  probePaneCount,\n  type HerdrContext,\n} from \"./herdr\";",
+          },
+          { type: "replace", target: "const getStatus = deps.getPeerStatus;", line: 6, replacement: "const getStatus = deps.getPeerStatus ?? defaultStatus;" },
+        ]),
+        (error: unknown) => {
+          const failure = parseSnapEditError(error);
+          assert.ok(failure);
+          assert.equal(failure.error_code, "TARGET_NOT_FOUND");
+          assert.match(failure.message, /shifted line numbers by \+5/);
+          assert.deepEqual(failure.suggested, { line: 11 });
+          return true;
+        },
+      );
+      // Atomic: op[0] was not applied either.
+      assert.equal(await readFile(file, "utf8"), content);
+    });
+
+    it("retrying with the suggested line succeeds after splitting the batch", async () => {
+      const file = await tempFile("sample.ts", [
+        "import {",
+        "  getCurrentPeer,",
+        "} from \"./herdr\";",
+        "",
+        "const one = 1;",
+        "const getStatus = deps.getPeerStatus;",
+        "const two = 2;",
+      ].join("\n") + "\n");
+      await applyTargetEdits(file, [
+        {
+          type: "replace",
+          target: "import {\n  getCurrentPeer,\n} from \"./herdr\";",
+          replacement: "import {\n  getCurrentPeer,\n  getPeerStatus,\n  renamePane,\n  rootDir,\n  probePaneCount,\n  type HerdrContext,\n} from \"./herdr\";",
+        },
+      ]);
+      const result = await applyTargetEdits(file, [
+        { type: "replace", target: "const getStatus = deps.getPeerStatus;", line: 11, replacement: "const getStatus = deps.getPeerStatus ?? defaultStatus;" },
+      ]);
+
+      assert.match(result, /── diff ──/);
+    });
+
+    it("explains stale range selectors with a shifted range suggestion", async () => {
+      const file = await tempFile("sample.ts", [
+        "import {",
+        "  getCurrentPeer,",
+        "} from \"./herdr\";",
+        "",
+        "const one = 1;",
+        "const getStatus = deps.getPeerStatus;",
+        "const two = 2;",
+      ].join("\n") + "\n");
+
+      await assert.rejects(
+        applyTargetEdits(file, [
+          {
+            type: "replace",
+            target: "import {\n  getCurrentPeer,\n} from \"./herdr\";",
+            replacement: "import {\n  getCurrentPeer,\n  getPeerStatus,\n  renamePane,\n  rootDir,\n  probePaneCount,\n  type HerdrContext,\n} from \"./herdr\";",
+          },
+          { type: "replace", target: "const getStatus = deps.getPeerStatus;", range: { startLine: 5, endLine: 6 }, replacement: "const getStatus = deps.getPeerStatus ?? defaultStatus;" },
+        ]),
+        (error: unknown) => {
+          const failure = parseSnapEditError(error);
+          assert.ok(failure);
+          assert.match(failure.message, /shifted line numbers by \+5/);
+          assert.deepEqual(failure.suggested, { range: { startLine: 10, endLine: 11 } });
+          return true;
+        },
+      );
+    });
+
+    it("omits the hint when the failing op is first in the batch", async () => {
+      const file = await tempFile("sample.ts", "const one = 1;\nconst two = 2;\n");
+
+      await assert.rejects(
+        applyTargetEdits(file, [
+          { type: "replace", target: "const missing = 0;", line: 1, replacement: "const found = 0;" },
+        ]),
+        (error: unknown) => {
+          const failure = parseSnapEditError(error);
+          assert.ok(failure);
+          assert.doesNotMatch(failure.message, /shifted line numbers/);
+          assert.equal(failure.suggested, undefined);
+          return true;
+        },
+      );
+    });
+
+    it("omits the suggested line when the shifted position is ambiguous", async () => {
+      const file = await tempFile("sample.ts", [
+        "const one = 1;",
+        "foo(); foo();",
+        "const two = 2;",
+      ].join("\n") + "\n");
+
+      await assert.rejects(
+        applyTargetEdits(file, [
+          { type: "replace", target: "const one = 1;", line: 1, replacement: "const uno = 1;\nconst unoMore = 11;\nconst unoMost = 111;" },
+          { type: "replace", target: "foo();", line: 2, replacement: "bar();" },
+        ]),
+        (error: unknown) => {
+          const failure = parseSnapEditError(error);
+          assert.ok(failure);
+          assert.match(failure.message, /shifted line numbers by \+2/);
+          // Both occurrences intersect the shifted line 4: too ambiguous to suggest.
+          assert.equal(failure.suggested, undefined);
+          return true;
+        },
+      );
+    });
+
+    it("suggests the shifted line and range as a pair on the combined path, and the pair round-trips", async () => {
+      const content = [
+        "const one = 1;",
+        "const two = 2;",
+        "foo();",
+        "const three = 3;",
+      ].join("\n") + "\n";
+      const file = await tempFile("sample.ts", content);
+
+      await assert.rejects(
+        applyTargetEdits(file, [
+          { type: "replace", target: "const one = 1;", line: 1, replacement: "const uno = 1;\nconst unoMore = 11;\nconst unoMost = 111;" },
+          { type: "replace", target: "foo();", line: 3, range: { startLine: 2, endLine: 4 }, replacement: "bar();" },
+        ]),
+        (error: unknown) => {
+          const failure = parseSnapEditError(error);
+          assert.ok(failure);
+          assert.match(failure.message, /shifted line numbers by \+2/);
+          assert.deepEqual(failure.suggested, { line: 5, range: { startLine: 4, endLine: 6 } });
+          return true;
+        },
+      );
+      assert.equal(await readFile(file, "utf8"), content);
+
+      // Round-trip: apply op[0], then retry op[1] with the suggested pair.
+      await applyTargetEdits(file, [
+        { type: "replace", target: "const one = 1;", line: 1, replacement: "const uno = 1;\nconst unoMore = 11;\nconst unoMost = 111;" },
+      ]);
+      const result = await applyTargetEdits(file, [
+        { type: "replace", target: "foo();", line: 5, range: { startLine: 4, endLine: 6 }, replacement: "bar();" },
+      ]);
+      assert.match(result, /── diff ──/);
+    });
+
+    it("suggests the pair on the combined intersect-miss path too", async () => {
+      const file = await tempFile("sample.ts", [
+        "const one = 1;",
+        "foo();",
+        "const two = 2;",
+      ].join("\n") + "\n");
+
+      await assert.rejects(
+        applyTargetEdits(file, [
+          { type: "replace", target: "const one = 1;", line: 1, replacement: "const uno = 1;\nconst unoMore = 11;\nconst unoMost = 111;" },
+          { type: "replace", target: "foo();", line: 2, range: { startLine: 2, endLine: 5 }, replacement: "bar();" },
+        ]),
+        (error: unknown) => {
+          const failure = parseSnapEditError(error);
+          assert.ok(failure);
+          // Range still selects the occurrence, but the stale line misses it.
+          assert.match(failure.message, /none intersect line 2/);
+          assert.match(failure.message, /shifted line numbers by \+2/);
+          assert.deepEqual(failure.suggested, { line: 4, range: { startLine: 4, endLine: 7 } });
+          return true;
+        },
+      );
+    });
+
+    it("omits the suggestion when the shifted occurrence lies outside the shifted range", async () => {
+      // Review finding: verifying the line against the whole file would
+      // suggest a line that resolves outside the caller's stale range; the
+      // retry would fail the range check. The pair must verify together.
+      const file = await tempFile("sample.ts", [
+        "const one = 1;",
+        "const two = 2;",
+        "foo();",
+        "bar();",
+      ].join("\n") + "\n");
+
+      await assert.rejects(
+        applyTargetEdits(file, [
+          { type: "replace", target: "const one = 1;", line: 1, replacement: "const uno = 1;\nconst unoMore = 11;\nconst unoMost = 111;" },
+          { type: "replace", target: "foo();", line: 3, range: { startLine: 2, endLine: 2 }, replacement: "bar();" },
+        ]),
+        (error: unknown) => {
+          const failure = parseSnapEditError(error);
+          assert.ok(failure);
+          assert.match(failure.message, /shifted line numbers by \+2/);
+          // foo(); sits on the shifted line 5, but the shifted range 4-4
+          // does not contain it: no verifiable pair, so no suggestion.
+          assert.equal(failure.suggested, undefined);
+          return true;
+        },
+      );
+    });
+  });
+
   it("keeps an exact hit authoritative over a trim occurrence elsewhere", async () => {
     // Regression: auto-cascade must only fall to trim when neither the raw
     // target nor its unescaped form matches. A unique exact match must not be

@@ -55,6 +55,9 @@ Tool behavior:
 - Diff headers use post-edit line numbers, matching the refreshed context below them. An operation that changes more than one occurrence reports the count.
 - Invalid `quick_edit` ranges/overlaps, invalid `target_edit` selectors/ranges, target misses, and `expectedStartLine` mismatches are rejected without partial writes.
 - Failure hints may list moved/close matches with line numbers. Multi-line target misses can include first-line near matches, last-line near matches, and capped anchor block candidates. Fuzzy hints are diagnostic-only and never applied automatically.
+- When an earlier op in a `target_edit` batch changes the line count, later line/range selectors apply to the post-edit state. A miss reports the accumulated shift (`earlier ops in this batch shifted line numbers by +5`) and, after verification, a suggested shifted line or range.
+- A `replace` whose range selector covers more lines than the matched target, with a multi-line replacement, notes that the range is an occurrence selector, not the replaced span, and points to `quick_edit` `start`/`end` for whole-span replaces.
+- `insert_before`/`insert_after` and EOF appends note when the adjacent edge duplicates the anchor (or last) line, since the anchor is kept and would appear twice.
 
 ## `target_edit` quick shape
 

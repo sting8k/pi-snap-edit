@@ -305,6 +305,9 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
   }));
   const resolved = normalizedEdits.map((edit, index) => validateLineRange(lines.length, edit, `edit[${index}]`, index));
 
+  const multiEdit = normalizedEdits.length > 1;
+  const notes: string[] = [];
+
   for (let index = 0; index < normalizedEdits.length; index++) {
     const edit = normalizedEdits[index]!;
     const resolvedEdit = resolved[index]!;
@@ -312,7 +315,20 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
     const preserveIndent = resolvePreserveIndent(edit);
 
     if (resolvedEdit.insert) {
-      // EOF / empty-file insert: no start-line content guard.
+      // EOF / empty-file insert: no start-line content guard. Adjacent-edge
+      // duplication check only: re-appending the file's last line is the
+      // common copy-paste mistake (appending after it, not replacing it).
+      const firstAppended = edit.lines[0] ?? "";
+      const lastFileLine = lines.length > 0 ? lines[lines.length - 1]! : undefined;
+      if (
+        lastFileLine !== undefined &&
+        firstAppended.trim() !== "" &&
+        firstAppended.trim() === lastFileLine.trim()
+      ) {
+        const note =
+          `appended lines[0] duplicates the last line of the file - the last line is kept, so it now appears twice`;
+        notes.push(multiEdit ? `edit[${index}] ${note}` : note);
+      }
       continue;
     }
 
@@ -487,8 +503,9 @@ export async function applyQuickEdits(absolutePath: string, edits: Edit[]): Prom
   }
 
   const byteNote = bytePropertiesNote(lineEnding, hasTrailingNewline);
+  if (byteNote) notes.unshift(byteNote);
   const parts: string[] = [];
-  if (byteNote) parts.push(byteNote);
+  if (notes.length > 0) parts.push(notes.join("\n"));
   const diff = formatDiffs(diffs);
   if (diff) parts.push(diff);
   const contexts = formatContexts(updated, contextRanges);

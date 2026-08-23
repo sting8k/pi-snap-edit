@@ -307,6 +307,109 @@ function doubleIndentNote(
   return "replacement begins with whitespace that lands after the line's existing indentation - check for doubled indent";
 }
 
+function rangeSelectorNote(op: TargetEditOp, occurrences: Occurrence[]): string | undefined {
+  // A range is an occurrence selector, not a replaced span. Warn when the
+  // shape suggests the caller expected a whole-span replace: the matches
+  // cover fewer lines than the range and the replacement expands them.
+  if (op.type !== "replace" || op.range === undefined) return undefined;
+  const rangeLines = op.range.endLine - op.range.startLine + 1;
+  const spans = [...occurrences].sort((a, b) => a.startLine - b.startLine);
+  if (spans.length === 0) return undefined;
+  let covered = 0;
+  let cursor = -1;
+  for (const span of spans) {
+    if (span.endLine <= cursor) continue;
+    const start = Math.max(span.startLine, cursor + 1);
+    covered += span.endLine - start + 1;
+    cursor = span.endLine;
+  }
+  if (covered >= rangeLines) return undefined;
+  const replacementLineCount = op.replacement.split("\n").length;
+  const maxSpanLines = Math.max(...spans.map((span) => span.endLine - span.startLine + 1));
+  if (replacementLineCount <= maxSpanLines) return undefined;
+  const matched =
+    occurrences.length === 1
+      ? formatMatchedLines(spans[0]!.startLine, spans[0]!.endLine)
+      : `${covered} of ${rangeLines} lines`;
+  return `range ${op.range.startLine}-${op.range.endLine} is an occurrence selector; only the matched target (${matched}) was replaced - other lines in the range were left unchanged; to replace a full line span use quick_edit start/end`;
+}
+
+function formatMatchedLines(startLine: number, endLine: number): string {
+  return startLine === endLine ? `line ${startLine + 1}` : `lines ${startLine + 1}-${endLine + 1}`;
+}
+
+function insertDuplicationNote(
+  op: TargetEditOp,
+  occurrences: Occurrence[],
+  lines: string[],
+): string | undefined {
+  // Only the edge adjacent to the anchor is checked: re-including the anchor
+  // line in the inserted content is the common copy-paste mistake. The far
+  // edge legitimately repeats closing brackets of the previous block.
+  if (op.type !== "insert_before" && op.type !== "insert_after") return undefined;
+  const occurrence = occurrences[0];
+  if (!occurrence) return undefined;
+  const edge = op.type === "insert_after" ? op.lines[0] : op.lines[op.lines.length - 1];
+  if (edge === undefined || edge.trim() === "") return undefined;
+  const anchor = lines[op.type === "insert_after" ? occurrence.endLine : occurrence.startLine];
+  if (anchor === undefined || anchor.trim() === "") return undefined;
+  if (edge.trim() !== anchor.trim()) return undefined;
+  const edgeLabel = op.type === "insert_after" ? "lines[0]" : `lines[${op.lines.length - 1}]`;
+  return `${op.type} ${edgeLabel} duplicates the anchor line - the anchor is not replaced, so it now appears twice`;
+}
+
+/** Batch shift: line and range selectors are validated against the in-memory state after earlier ops in the same batch. When a selector misses, this explains the drift and verifies a shifted retry before suggesting it. */
+function batchShiftSuffix(batchShift: number): string {
+  if (batchShift === 0) return "";
+  const sign = batchShift > 0 ? `+${batchShift}` : `${batchShift}`;
+  return `; earlier ops in this batch shifted line numbers by ${sign} - selectors apply to the state after earlier ops, so adjust them or split the batch`;
+}
+
+function shiftedLineSuggestion(all: Occurrence[], batchShift: number, line: number): number | undefined {
+  if (batchShift === 0) return undefined;
+  const shifted = line + batchShift;
+  if (shifted < 1) return undefined;
+  const targetLine = shifted - 1;
+  const matches = all.filter((o) => o.startLine <= targetLine && o.endLine >= targetLine);
+  // Only suggest when exactly one occurrence intersects: retrying with the
+  // shifted line must resolve unambiguously.
+  return matches.length === 1 ? shifted : undefined;
+}
+
+function shiftedRangeSuggestion(
+  all: Occurrence[],
+  batchShift: number,
+  range: { startLine: number; endLine: number },
+): { startLine: number; endLine: number } | undefined {
+  if (batchShift === 0) return undefined;
+  const startLine = range.startLine + batchShift;
+  const endLine = range.endLine + batchShift;
+  if (startLine < 1) return undefined;
+  const matches = all.filter((o) => o.startLine >= startLine - 1 && o.endLine <= endLine - 1);
+  return matches.length > 0 ? { startLine, endLine } : undefined;
+}
+function shiftedLineRangeSuggestion(
+  all: Occurrence[],
+  batchShift: number,
+  line: number,
+  range: { startLine: number; endLine: number },
+): { line: number; range: { startLine: number; endLine: number } } | undefined {
+  // Combined line+range selectors must round-trip as a pair: the shifted
+  // range must select at least one occurrence and the shifted line must
+  // intersect one of those. Suggesting a line that resolves against the
+  // file but outside the caller's (stale) range would fail the retry.
+  if (batchShift === 0) return undefined;
+  const shiftedLine = line + batchShift;
+  const shiftedRange = { startLine: range.startLine + batchShift, endLine: range.endLine + batchShift };
+  if (shiftedLine < 1 || shiftedRange.startLine < 1) return undefined;
+  const inside = all.filter((o) => o.startLine >= shiftedRange.startLine - 1 && o.endLine <= shiftedRange.endLine - 1);
+  if (inside.length === 0) return undefined;
+  const targetLine = shiftedLine - 1;
+  const intersecting = inside.filter((o) => o.startLine <= targetLine && o.endLine >= targetLine);
+  if (intersecting.length === 0) return undefined;
+  return { line: shiftedLine, range: shiftedRange };
+}
+
 function targetCandidates(lines: string[], needle: string): EditFailureCandidate[] {
   return closeLineMatches(lines, needle).map((match) => ({
     line: match.lineNumber,
@@ -399,7 +502,14 @@ function validateLineSelector(line: unknown, lineCount: number, index: number): 
   return line - 1;
 }
 
-function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], offsets: number[], index: number): Occurrence[] {
+function selectedOccurrences(
+  op: TargetEditOp,
+  text: string,
+  lines: string[],
+  offsets: number[],
+  index: number,
+  batchShift: number,
+): Occurrence[] {
   if (op.target.length === 0) {
     throwEditError({
       error_code: "VALIDATION",
@@ -438,11 +548,14 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
       throwEditError(
         {
           error_code: "TARGET_NOT_FOUND",
-          message: `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0`,
+          message: `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0${batchShiftSuffix(batchShift)}`,
           op_index: index,
           at_line: op.line,
           expected: op.target,
           candidates: occurrenceCandidates(all, lines),
+          ...(shiftedLineSuggestion(all, batchShift, op.line!) !== undefined
+            ? { suggested: { line: shiftedLineSuggestion(all, batchShift, op.line!) } }
+            : {}),
         },
         [formatOccurrenceLines(all, lines).replace(/^\n/, "")],
       );
@@ -515,11 +628,14 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
       throwEditError(
         {
           error_code: "TARGET_NOT_FOUND",
-          message: `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0`,
+          message: `op[${index}] expected 1 occurrence of ${JSON.stringify(op.target)} on line ${op.line} but found 0${batchShiftSuffix(batchShift)}`,
           op_index: index,
           ...(op.line !== undefined ? { at_line: op.line } : {}),
           expected: op.target,
           candidates: occurrenceCandidates(all, lines),
+          ...(op.line !== undefined && shiftedLineSuggestion(all, batchShift, op.line) !== undefined
+            ? { suggested: { line: shiftedLineSuggestion(all, batchShift, op.line) } }
+            : {}),
         },
         [formatOccurrenceLines(all, lines).replace(/^\n/, "")],
       );
@@ -546,15 +662,17 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
     const range = op.range!;
     const matches = selectRange(range);
     if (matches.length === 0) {
+      const shiftedRange = shiftedRangeSuggestion(all, batchShift, range);
       throwEditError(
         {
           error_code: "TARGET_NOT_FOUND",
-          message: `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0`,
+          message: `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0${batchShiftSuffix(batchShift)}`,
           op_index: index,
           at_line: range.startLine,
           end_line: range.endLine,
           expected: op.target,
           candidates: occurrenceCandidates(all, lines),
+          ...(shiftedRange ? { suggested: { range: shiftedRange } } : {}),
         },
         [formatOccurrenceLines(all, lines).replace(/^\n/, "")],
       );
@@ -569,32 +687,36 @@ function selectedOccurrences(op: TargetEditOp, text: string, lines: string[], of
     const targetLine = validateLineSelector(op.line, lines.length, index);
     const rangeMatches = selectRange(range);
     if (rangeMatches.length === 0) {
+      const shiftedLineRange = shiftedLineRangeSuggestion(all, batchShift, op.line!, range);
       throwEditError(
         {
           error_code: "TARGET_NOT_FOUND",
-          message: `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0`,
+          message: `op[${index}] expected occurrences of ${JSON.stringify(op.target)} in lines ${range.startLine}-${range.endLine} but found 0${batchShiftSuffix(batchShift)}`,
           op_index: index,
           at_line: range.startLine,
           end_line: range.endLine,
           expected: op.target,
           candidates: occurrenceCandidates(all, lines),
+          ...(shiftedLineRange ? { suggested: shiftedLineRange } : {}),
         },
         [formatOccurrenceLines(all, lines).replace(/^\n/, "")],
       );
     }
     const intersecting = rangeMatches.filter((o) => o.startLine <= targetLine && o.endLine >= targetLine);
     if (intersecting.length === 0) {
+      const shiftedLineRange = shiftedLineRangeSuggestion(all, batchShift, op.line!, range);
       throwEditError(
         {
           error_code: "TARGET_AMBIGUOUS",
           message: `op[${index}] range ${range.startLine}-${range.endLine} selected ${rangeMatches.length} occurrence(s) of ${JSON.stringify(
             op.target,
-          )} but none intersect line ${op.line}`,
+          )} but none intersect line ${op.line}${batchShiftSuffix(batchShift)}`,
           op_index: index,
           ...(op.line !== undefined ? { at_line: op.line } : {}),
           end_line: range.endLine,
           expected: op.target,
           candidates: occurrenceCandidates(rangeMatches, lines),
+          ...(shiftedLineRange ? { suggested: shiftedLineRange } : {}),
         },
         [formatOccurrenceLines(rangeMatches, lines).replace(/^\n/, "")],
       );
@@ -839,16 +961,19 @@ export async function applyTargetEdits(
   const notes: string[] = [];
   const multiOp = ops.length > 1;
 
+  let batchShift = 0;
   for (const [index, op] of ops.entries()) {
     validatePayload(op, index);
     const beforeLines = state.lines;
     const text = toNormalized(state);
     const offsets = lineStartOffsets(state.lines);
-    const occurrences = selectedOccurrences(op, text, state.lines, offsets, index);
+    const occurrences = selectedOccurrences(op, text, state.lines, offsets, index, batchShift);
     const localNotes = [
       matchTierNote(occurrences),
       occurrenceCountNote(op.type, occurrences.length),
       doubleIndentNote(op, occurrences, text, offsets),
+      rangeSelectorNote(op, occurrences),
+      insertDuplicationNote(op, occurrences, state.lines),
     ].filter(Boolean) as string[];
     if (localNotes.length > 0) {
       const combined = localNotes.join("; ");
@@ -875,6 +1000,7 @@ export async function applyTargetEdits(
       rebasePriorDiffs(diffs, diff.newStart, diff.newLines.length - diff.oldLines.length);
       diffs.push(diff);
     }
+    batchShift += state.lines.length - beforeLines.length;
   }
 
   const byteNote = bytePropertiesNote(lineEnding, hasTrailingNewline);
