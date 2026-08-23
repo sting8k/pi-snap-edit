@@ -1,3 +1,31 @@
+## pi-snap-edit v5.2.0
+
+Teaching release, from an unplanned evaluation. A real-world 644-entry agent session (76 edit calls, all-green tests, zero corruption) still burned roughly 30% of its edit calls on retries and cleanup after ops landed in unexpected places. Diagnosis found three repeat op-construction mistakes; this release makes the tools narrate their own semantics at the exact moment an agent is about to make them. No matching or application behavior changed.
+
+### Changes
+
+- **Batch line-shift hints (`target_edit`):** when an earlier op in a batch changes the line count and a later `line`/`range` selector misses, the error now reports the accumulated shift (`earlier ops in this batch shifted line numbers by +5 - selectors apply to the state after earlier ops, so adjust them or split the batch`) and, after verification, suggests the shifted line (exactly one occurrence intersecting), shifted range (at least one occurrence fully inside), or shifted line+range pair (both verified together). This unblocks the atomic-reject retry loop from the evaluated session, where the agent re-sent the same stale selector three times because the reject swallowed the feedback that would have explained the miss.
+- **Range-selector misuse note (`target_edit`):** a `replace` whose `range` covers more lines than the matched target while the replacement expands the match now notes that the range is an occurrence selector, not the replaced span (`range 1-5 is an occurrence selector; only the matched target (line 3) was replaced - other lines in the range were left unchanged`) and points to `quick_edit` `start`/`end` for whole-span replaces. This was the session's dominant failure: the agent quoted a one-line target with a whole-block replacement and a wide range, then cleaned up the leftover old block six separate times.
+- **Anchor-duplication notes (`target_edit` + `quick_edit`):** `insert_after`/`insert_before` warn when the edge adjacent to the anchor re-includes the anchor line (the anchor is kept, so it appears twice); `quick_edit` EOF appends warn when `lines[0]` duplicates the file's last line. Trim-equal comparison; blank edges skipped; far edges never checked (stacked closers are legitimate).
+
+### Compatibility
+
+No API or tool-name changes. Success and failure output gained note/hint lines in the situations above; files are byte-identical to v5.1.0 for every input. Suggestions in structured error payloads are verified to round-trip (combined line+range suggestions are verified as a pair, per post-review fix) and are omitted when they cannot be verified.
+
+### Install
+
+```bash
+pi install npm:pi-snap-edit
+```
+
+### Verification
+
+- `npm run typecheck` passed.
+- `npm test` passed: 188 tests, up from 167 at v5.1.0.
+- `npm pack --dry-run` passed.
+- Live-verified by replaying the exact failing operations from the evaluated session: the stale line hint reports `shifted line numbers by +5` (with the suggestion correctly omitted where the original agent's line was additionally off), the whole-block range replace emits the occurrence-selector note, and both anchor-duplication shapes emit their notes while negative cases stay silent.
+- Meta-evidence: while implementing these fixes the implementing agent itself hit anchor-duplication three times and the `lines`-vs-`replacement` schema mix-up twice - each recognized and cleaned in a single turn, exactly the recovery profile the notes are designed to produce.
+
 ## pi-snap-edit v5.1.0
 
 Reliability and ergonomics release. Trim matching gets an unescape parity fix and indentation adjustment, `quick_edit` no longer corrupts CRLF files when a replacement entry contains real newlines, and tool output was reworked around what three live agent evaluations showed agents actually struggle with. No API changes.
