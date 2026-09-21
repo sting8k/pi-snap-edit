@@ -1,5 +1,10 @@
 # pi-snap-edit
 
+> [!IMPORTANT]
+> **Experimental project — superseded by [pi-utils](https://github.com/sting8k/pi-utils).**
+> This extension still works, but it is not the most efficient approach. I have since switched to a
+> different Edit approach with far fewer errors, and new development happens there.
+
 Fast, precise line edits for Pi. Experimental.
 
 ## Why
